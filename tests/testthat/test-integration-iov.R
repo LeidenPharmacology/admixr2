@@ -4,6 +4,7 @@
 
 skip_on_cran()
 skip_if_not_installed("rxode2")
+skip_if(packageVersion("nlmixr2est") < "7.2.1", "IOV needs the nlmixr2est IOV rewrite (>= 7.2.1)")
 
 .iov_truth <- function() {
   ini({ tcl <- log(2.7); tv <- log(30); eta.cl ~ 0.09; eta.k1 ~ 0.05; eta.k2 ~ 0.05

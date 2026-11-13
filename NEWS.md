@@ -1,4 +1,4 @@
-# admixr2 (development version)
+# admixr2 0.4.2
 
 ## New features
 
@@ -11,7 +11,7 @@
   number of occasions to nlmixr2 with `admData(occasions = c(occ = 2))`.
   An occasion starts at the dose that opens it: when several doses lie between two occasions' samples, say which with `occasion_starts =` (it is refused as ambiguous otherwise). IOV is identified only from a full
   covariance matrix `V` across occasions, as the two variances otherwise share
-  one flat ridge. `adfo` and `adirmc` refuse an IOV model.
+  one flat ridge. `adfo` and `adirmc` refuse an IOV model. IOV needs nlmixr2est >= 7.2.1.
 
 * **Fixed omega is now held, not refused**, as in nlmixr2: a fixed random effect,
   or a whole fixed block, stays in the model and is left out of the optimizer. A
