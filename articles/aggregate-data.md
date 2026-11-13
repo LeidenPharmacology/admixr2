@@ -114,14 +114,25 @@ ggplot(band, aes(t, m)) +
 
 ![](aggregate-data_files/figure-html/band-plot-1.png)
 
-Passing `V` as a plain vector of variances is enough; admixr2 expands it
-to a diagonal matrix and sets `method = "var"`:
+Write the arm down with
+[`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md),
+giving the spread as the `sd` it is. One SD per time point is enough;
+admixr2 builds a diagonal `V` from it and sets `method = "var"`:
 
 ``` r
-
-study <- list(E = E, V = SD^2, n = n, times = times,
-              ev = rxode2::et(amt = 50, cmt = "central"))
+study <- admStudy(E = E, sd = SD, n = n, times = times,
+                  ev = rxode2::et(amt = 50, cmt = "central"))
+study
+admixr2 study 'study'  -- digitised DATA
+  design    n = 60, event table, 7 times (0.5 - 24)
+  V scale   unbiased denominator  (published spread; converted to ML for the fit)
+  reported  mean profile, per-time spread
 ```
+
+[`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+would equally take the plotted bars as they are, `sem = SEM`, and do the
+`sqrt(n)` conversion itself. Converting by hand above is only to show
+what that conversion is.
 
 ``` r
 
@@ -145,44 +156,46 @@ pk_model <- function() {
 
 ``` r
 fit <- nlmixr2(pk_model, admData(), est = "adgh",
-               control = adghControl(studies = list(mg50 = study)))
+               control = adghControl(studies = admStudies(mg50 = study)))
 fit
 ── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
-adgh -1323.144 -1313.144 -1292.943       661.5719
+adgh -1330.198 -1320.198 -1299.997       665.0992
 
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.478      0.167     0   0.645 3.332
+elapsed    0.437      0.138     0   0.575 2.415
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                           Parameter    Est.      SE   %RSE
-tcl             Log clearance (L/h)   1.556 0.03364  2.162
-tv                   Log volume (L)   3.911 0.02645 0.6762
-prop.cp Proportional residual error 0.09732 0.05383  55.31
-            Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl            4.738 (4.436, 5.061)    25.77         NaN
-tv             49.96 (47.44, 52.62)    19.68         NaN
-prop.cp 0.09732 (-0.008190, 0.2028)                     
+tcl             Log clearance (L/h)   1.556 0.03339  2.146
+tv                   Log volume (L)   3.911 0.02632 0.6729
+prop.cp Proportional residual error 0.09518 0.05512  57.91
+           Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl           4.738 (4.438, 5.059)    25.59         NaN
+tv            49.96 (47.45, 52.61)    19.61         NaN
+prop.cp 0.09518 (-0.01284, 0.2032)                     
  
   Covariance Type (fit$covMethod): r,s
   Some strong fixed parameter correlations exist (fit$cor) :
                 cor:tv,tcl        cor:prop.cp,tcl      cor:om.eta.cl,tcl 
-               0.0148                -0.0733                 0.0492  
+               0.0147                -0.0751                 0.0512  
       cor:om.eta.v,tcl         cor:prop.cp,tv       cor:om.eta.cl,tv 
-               0.0447                 -0.138                 0.0845  
+               0.0467                 -0.138                 0.0847  
        cor:om.eta.v,tv  cor:om.eta.cl,prop.cp   cor:om.eta.v,prop.cp 
-                0.117                 -0.592                 -0.831  
+                0.118                 -0.603                 -0.834  
 cor:om.eta.v,om.eta.cl 
-                0.469  
+                0.482  
  
 
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
+  Information about run found (fit$runInfo):
+   • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
   Censoring (fit$censInformation): No censoring
   Minimization message (fit$message):  
     NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. 
@@ -196,41 +209,41 @@ Now make the mistake: use the plotted `SEM` as if it were an `SD`, so
 ``` r
 fit_wrong <- nlmixr2(
   pk_model, admData(), est = "adgh",
-  control = adghControl(studies = list(
-    mg50 = list(E = E, V = SEM^2, n = n, times = times,   # WRONG: SEM^2 as V
-                ev = rxode2::et(amt = 50, cmt = "central")))))
+  control = adghControl(studies = admStudies(
+    mg50 = admStudy(E = E, sd = SEM, n = n, times = times,   # WRONG: SEM as SD
+                    ev = rxode2::et(amt = 50, cmt = "central")))))
 fit_wrong
 ── nlmixr² adgh ──
 
-          OBJF       AIC       BIC Log-likelihood
-adgh -2942.688 -2932.688 -2912.487       1471.344
+         OBJF      AIC       BIC Log-likelihood
+adgh -2948.24 -2938.24 -2918.039        1474.12
 
 ── Time (sec fit_wrong$time): ──
 
         optimize covariance other elapsed other
-elapsed      0.7      0.138     0   0.838 0.039
+elapsed    0.416      0.096     0   0.512 0.166
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
                           Parameter     Est.       SE   %RSE
-tcl             Log clearance (L/h)    1.558 0.005669 0.3639
-tv                   Log volume (L)    3.908 0.004580 0.1172
-prop.cp Proportional residual error 0.008208 0.003649  44.46
+tcl             Log clearance (L/h)    1.558 0.005641 0.3621
+tv                   Log volume (L)    3.908 0.004554 0.1165
+prop.cp Proportional residual error 0.008208 0.003604  43.91
              Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl             4.749 (4.696, 4.802)    4.181         NaN
-tv              49.79 (49.34, 50.24)    2.935         NaN
-prop.cp 0.008208 (0.001056, 0.01536)                     
+tcl             4.748 (4.696, 4.801)    4.159         NaN
+tv              49.79 (49.34, 50.23)    2.910         NaN
+prop.cp 0.008208 (0.001144, 0.01527)                     
  
   Covariance Type (fit_wrong$covMethod): r,s
   Some strong fixed parameter correlations exist (fit_wrong$cor) :
                 cor:tv,tcl        cor:prop.cp,tcl      cor:om.eta.cl,tcl 
-               0.0139                 -0.780                  0.118  
+               0.0135                 -0.780                  0.118  
       cor:om.eta.v,tcl         cor:prop.cp,tv       cor:om.eta.cl,tv 
-                0.269                 -0.209                 -0.493  
+                0.268                 -0.212                 -0.496  
        cor:om.eta.v,tv  cor:om.eta.cl,prop.cp   cor:om.eta.v,prop.cp 
-                0.557                  0.134                 -0.258  
+                0.561                  0.140                 -0.261  
 cor:om.eta.v,om.eta.cl 
-               -0.345  
+               -0.349  
  
 
   No correlations in between subject variability (BSV) matrix
@@ -238,7 +251,8 @@ cor:om.eta.v,om.eta.cl
     or correlation (fit_wrong$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Information about run found (fit_wrong$runInfo):
-   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.4e-06, cond 4.23e+05), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `prop.cp`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
+   • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
+   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.4e-06, cond 4.17e+05), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `prop.cp`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
    • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. 
   Censoring (fit_wrong$censInformation): No censoring
   Minimization message (fit_wrong$message):  
@@ -252,7 +266,7 @@ variability is not:
 
 round(diag(fit$omega) / diag(fit_wrong$omega), 1)
 #> eta.cl  eta.v 
-#>   36.8   44.1
+#>   36.7   44.6
 ```
 
 `Omega` shrinks by more than an order of magnitude on both random
@@ -270,7 +284,7 @@ Nothing in the *point estimates* warns you. The *precision* does:
 round(c(RSE_CL_correct = fit$parFixedDf["tcl", "%RSE"],
         RSE_CL_wrong   = fit_wrong$parFixedDf["tcl", "%RSE"]), 3)
 #> RSE_CL_correct   RSE_CL_wrong 
-#>          2.162          0.364
+#>          2.146          0.362
 ```
 
 Clearance comes back not just right but implausibly certain — its
@@ -300,25 +314,26 @@ the subject-level matrix and `cov.wt(dv_mat, method = "ML")$cov`; see
 [Getting
 started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md).
 
-Note the denominator, and declare it. admixr2’s likelihood is the exact
-one for `n` iid draws only under the ML (`n`) covariance, while a
-published SD is the unbiased (`n - 1`) one – so `V = SD^2` off a figure
-is on the `n - 1` scale and strictly wants `V = SD^2 * (n - 1) / n`.
+Note the denominator. admixr2’s likelihood is the exact one for `n` iid
+draws only under the ML (`n`) covariance, while a published SD is the
+unbiased (`n - 1`) one – so `V = SD^2` off a figure is on the `n - 1`
+scale and strictly wants `V = SD^2 * (n - 1) / n`.
 
-Rather than apply that by hand, say which convention the number is on:
+[`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+applies that for you, reading the currency you wrote the study in: an
+`sd` or `sem` is taken as a published, `n - 1` spread, and a `V` as a
+matrix you computed yourself, on the ML scale. Printing the study shows
+which it chose. Only a source that breaks that pattern needs saying so:
 
 ``` r
 
-list(E = E, V = SD^2, n = n, times = times,
-     ev      = rxode2::et(amt = 50, cmt = "central"),
-     v_denom = "unbiased")   # a published SD; admixr2 converts it
+admStudy(E = E, sd = sd_ml, n = n, times = times,   # an SD you computed with /n
+         ev = rxode2::et(amt = 50, cmt = "central"),
+         v_denom = "ml")
 ```
 
-`v_denom` defaults to `"ml"` — what `cov.wt(method = "ML")` and
-[`datagen()`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)
-produce — so nothing changes for data you computed yourself. It is **per
-study**, because a meta-analysis routinely mixes a digitised figure with
-a model-derived source and the two need not agree.
+The choice is **per study**, because a meta-analysis routinely mixes a
+digitised figure with a model-derived source and the two need not agree.
 
 At `n = 60` the factor is 1.7%. It grows as `n` falls, and it stops
 being cosmetic for any method that scores the reported covariance
@@ -363,9 +378,9 @@ wrong in each direction:
 
 assume <- function(mult) {
   f <- nlmixr2(pk_model, admData(), est = "adgh",
-               control = adghControl(studies = list(
-                 mg50 = list(E = E, V = (SD * mult)^2, n = n, times = times,
-                             ev = rxode2::et(amt = 50, cmt = "central")))))
+               control = adghControl(studies = admStudies(
+                 mg50 = admStudy(E = E, sd = SD * mult, n = n, times = times,
+                                 ev = rxode2::et(amt = 50, cmt = "central")))))
   c(exp(f$theta[["tcl"]]), exp(f$theta[["tv"]]),
     diag(f$omega)[["eta.cl"]], diag(f$omega)[["eta.v"]])
 }
@@ -389,10 +404,10 @@ knitr::kable(tbl, row.names = FALSE,
 
 | Assumed SD       |   CL |     V | var(eta.cl) | var(eta.v) |
 |:-----------------|-----:|------:|------------:|-----------:|
-| 0.5x (too small) | 4.74 | 49.89 |       0.017 |      0.010 |
-| 1x (correct)     | 4.74 | 49.96 |       0.064 |      0.038 |
-| 2x (too large)   | 4.77 | 49.86 |       0.245 |      0.103 |
-| 4x (too large)   | 2.01 |  1.02 |       0.001 |      5.937 |
+| 0.5x (too small) | 4.74 | 49.89 |       0.016 |      0.010 |
+| 1x (correct)     | 4.74 | 49.96 |       0.063 |      0.038 |
+| 2x (too large)   | 4.77 | 49.87 |       0.242 |      0.102 |
+| 4x (too large)   | 2.02 |  1.02 |       0.001 |      5.937 |
 
 Fit against a deliberately wrong V. Truth: CL = 5, V = 50, var(eta.cl) =
 0.09, var(eta.v) = 0.04. {.table}

@@ -21,7 +21,7 @@ is ready to supply directly to admControl(studies = ...)."><meta property="og:im
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.1</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.2</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -67,7 +67,7 @@ is ready to supply directly to admControl(studies = ...)."><meta property="og:im
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Generate aggregate study data from (possibly different) pharmacometric models</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/datagen.R" class="external-link"><code>R/datagen.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.2/R/datagen.R" class="external-link"><code>R/datagen.R</code></a></small>
       <div class="d-none name"><code>datagen.Rd</code></div>
     </div>
 
@@ -92,8 +92,9 @@ is ready to supply directly to <code>admControl(studies = ...)</code>.</p>
 
 
 <dl><dt id="arg-studies">studies<a class="anchor" aria-label="anchor" href="#arg-studies"></a></dt>
-<dd><p>A named list of study specifications.  Each element is a list
-with:</p><dl><dt><code>model</code></dt>
+<dd><p>An <code><a href="admStudies.html">admStudies()</a></code> (or single <code><a href="admStudy.html">admStudy()</a></code>) object, returned
+generated (<code>model</code> and <code>control</code> are then not used); or a named list of study specifications.  Each element is
+a list with:</p><dl><dt><code>model</code></dt>
 <dd><p>An nlmixr2-style model function with <code><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini()</a></code> and
 <code><a href="https://nlmixr2.github.io/rxode2/reference/model.html" class="external-link">model()</a></code> blocks.  Serves as the data-generating model for this
 study.  May differ between studies.  Can be omitted if a top-level
@@ -198,7 +199,17 @@ residual-free (IIV-only) moments, omit the error term from the model.</p></dd>
 </dl></div>
     <div class="section level2">
     <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
-    <p>With <code>control = datagenControl(method = "mc")</code> (the default) population
+    <p><strong>Most analyses should not call this directly.</strong> Write each study with
+<code><a href="admStudy.html">admStudy()</a></code> — <code>admStudy(model, est)</code> for a published model,
+<code>admStudy(model, est, simulated = TRUE)</code> for a trial you are simulating —
+and pass <code><a href="admStudies.html">admStudies()</a></code> to the fit, which generates them for you. Use
+<code>datagen()</code> to LOOK at what such studies imply (pass the <code><a href="admStudies.html">admStudies()</a></code>
+object and it returns the generated <code>E</code>/<code>V</code>; a covariate source is cut on
+every covariate it estimated, where a fit cuts only those its analysis model
+reads), or for what <code><a href="admStudy.html">admStudy()</a></code> cannot yet express: several observed outputs
+(<code>observations</code>), the individual simulated samples, or a choice of moment
+method.</p>
+<p>With <code>control = datagenControl(method = "mc")</code> (the default) population
 moments are computed via the same Monte Carlo engine as <code>est = "admc"</code>:
 $$E_t = \bar{f}_s(\hat\theta_s, \eta_i, t)$$
 $$V_{ts} = \widehat{\mathrm{Cov}}_\eta[f_{s,t}, f_{s,s'}] + \Sigma_s$$

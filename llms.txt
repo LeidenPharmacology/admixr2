@@ -181,6 +181,8 @@ cohort it enrolled — and let admixr2 assemble the summary it implies.
 
 - [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
   : Write down a published study
+- [`doseBands()`](https://leidenpharmacology.github.io/admixr2/reference/doseBands.md)
+  : A dosing table by covariate band
 - [`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
   : Collect the studies a meta-analysis draws on
 - [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)
@@ -280,8 +282,8 @@ source enrolled.
 
 - [From a published figure to E, V and
   n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md):
-- [Generating aggregate data with
-  datagen](https://leidenpharmacology.github.io/admixr2/articles/datagen.md):
+- [Simulated trials and published
+  models](https://leidenpharmacology.github.io/admixr2/articles/datagen.md):
 - [Covariates](https://leidenpharmacology.github.io/admixr2/articles/covariates.md):
 
 ### Meta-analysis across studies

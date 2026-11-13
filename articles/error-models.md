@@ -5,8 +5,7 @@
 Your model ends with `cp ~ prop(res.sd)`, as in an individual-level fit.
 The input is not individual data, though: it is a mean and an error bar
 per time point, digitised from a figure or implied by a published model
-through
-[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md),
+([`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)),
 and usually several studies at once.
 
 Each error bar holds two things the fit has to tell apart — subjects
@@ -29,11 +28,10 @@ A published error bar is one number covering both sources of spread, and
 only the second — the variability the structural model does not explain
 — is your residual model’s job.
 
-Everything below uses one model and one study, with
-[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-standing in for a digitised summary so the true values are known. A real
-analysis would read `E`, `V` and `n` off the paper; see [From a
-published figure to E, V and
+Everything below uses one model and one study, SIMULATED with
+`admStudy(..., simulated = TRUE)` to stand in for a digitised summary so
+the true values are known. A real analysis would read `E`, `V` and `n`
+off the paper; see [From a published figure to E, V and
 n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md).
 
 ``` r
@@ -57,9 +55,8 @@ mod_prop <- function() {
   })
 }
 
-gen <- datagen(
-  studies = list(s1 = list(times = times, ev = rxode2::et(amt = 100), n = 200L)),
-  model = mod_prop, control = datagenControl(n_sim = 20000L, seed = 1L))
+gen <- admStudies(s1 = admStudy(model = mod_prop, n = 200, dose = 100,
+                                 times = times, simulated = TRUE))
 ```
 
 Simulating the individual data behind such a summary — 20 000 subjects,
@@ -119,12 +116,12 @@ knitr::kable(
 
 | parameter   | truth |     prop |    add |
 |:------------|------:|---------:|-------:|
-| CL (L/h)    |  5.00 |     5.00 |  5.213 |
-| V (L)       | 20.00 |    20.00 | 19.597 |
+| CL (L/h)    |  5.00 |     5.00 |  5.214 |
+| V (L)       | 20.00 |    20.00 | 19.596 |
 | IIV on CL   |  0.09 |     0.09 |  0.084 |
 | IIV on V    |  0.04 |     0.04 |  0.065 |
 | residual SD |  0.20 |     0.20 |  0.467 |
-| -2LL        |    NA | -1542.27 | -4.118 |
+| -2LL        |    NA | -1540.32 | -3.664 |
 
 Same data, same structural model, two residual models. The additive
 residual SD is in mg/L and is not comparable to the proportional one.
@@ -133,11 +130,11 @@ residual SD is in mg/L and is not comparable to the proportional one.
 The proportional fit recovers all five generating values. The additive
 fit leaves clearance and volume within a few percent — the dangerous
 part, CL and V being the first numbers anyone checks — while the IIV on
-volume comes back 63% too large. The variance the residual failed to
+volume comes back 64% too large. The variance the residual failed to
 account for has to go somewhere, and a trial sized from that fit would
 simulate the wrong spread.
 
-The objective moves 1538 points, so comparing the two catches it. The
+The objective moves 1537 points, so comparing the two catches it. The
 covariance panel shows the same thing without needing a second fit at
 all:
 
@@ -313,9 +310,9 @@ diagnostics above.
 - **Take the residual from the source that reports one.** A study
   publishing its own population model has already estimated a residual
   from the individual data you do not have — better information than an
-  aggregate fit can recover. Supply that model to
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  and it comes along, or fix yours to the same value:
+  aggregate fit can recover. Enter that model with
+  `admStudy(model, est)` and it comes along, or fix yours to the same
+  value:
 
   ``` r
 
@@ -414,8 +411,6 @@ moves; see `NEWS.md`.
   — reading the covariance panel
 - [Simulating data & using published
   models](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)
-  —
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md),
-  used throughout here
+  — simulated trials and published models as studies
 - [Getting
   started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md)

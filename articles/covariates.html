@@ -29,7 +29,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.1</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.2</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -90,7 +90,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Covariates</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/covariates.Rmd" class="external-link"><code>vignettes/covariates.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.2/vignettes/covariates.Rmd" class="external-link"><code>vignettes/covariates.Rmd</code></a></small>
       <div class="d-none name"><code>covariates.Rmd</code></div>
     </div>
 
@@ -138,16 +138,16 @@ on its own data.</caption>
 <tr class="even">
 <td align="left">mild</td>
 <td align="right">59</td>
-<td align="right">4.926</td>
-<td align="right">49.984</td>
-<td align="right">0.158</td>
+<td align="right">5.142</td>
+<td align="right">49.980</td>
+<td align="right">0.119</td>
 </tr>
 <tr class="odd">
 <td align="left">moderate</td>
 <td align="right">38</td>
-<td align="right">2.938</td>
-<td align="right">50.005</td>
-<td align="right">0.196</td>
+<td align="right">2.994</td>
+<td align="right">49.999</td>
+<td align="right">0.179</td>
 </tr>
 </tbody>
 </table>
@@ -302,32 +302,32 @@ term.</caption>
 <tr class="odd">
 <td align="left">CL at 70 kg, CRCL 90, women (L/h)</td>
 <td align="right">5.00</td>
-<td align="right">4.987</td>
+<td align="right">5.050</td>
 </tr>
 <tr class="even">
 <td align="left">V at 70 kg (L)</td>
 <td align="right">50.00</td>
-<td align="right">50.060</td>
+<td align="right">50.016</td>
 </tr>
 <tr class="odd">
 <td align="left">renal exponent</td>
 <td align="right">0.60</td>
-<td align="right">0.591</td>
+<td align="right">0.588</td>
 </tr>
 <tr class="even">
 <td align="left">sex effect (log)</td>
 <td align="right">0.18</td>
-<td align="right">0.180</td>
+<td align="right">0.162</td>
 </tr>
 <tr class="odd">
 <td align="left">additive SD (mg/L)</td>
 <td align="right">0.08</td>
-<td align="right">0.080</td>
+<td align="right">0.079</td>
 </tr>
 <tr class="even">
 <td align="left">omega (eta.cl)</td>
 <td align="right">0.05</td>
-<td align="right">0.065</td>
+<td align="right">0.048</td>
 </tr>
 </tbody>
 </table>
@@ -337,7 +337,7 @@ put it at 0.57. There are <strong>no intervals</strong>: every source
 here is a published model rather than a sample, so there is no sampling
 law to build one from and admixr2 reports no standard error at all.</p>
 <p>The sex effect shows what pooling costs. The three trials reported
-0.18, 0.16, 0.20 for a quantity genuinely identical in all three;
+0.18, 0.12, 0.18 for a quantity genuinely identical in all three;
 sampling noise alone put them that far apart. Reconciling that is not
 free — some of it lands in the other parameters, which is why the renal
 exponent comes back a little below its truth.</p>
@@ -389,17 +389,17 @@ differ.</caption>
 <tbody>
 <tr class="odd">
 <td align="left">power (correct)</td>
-<td align="right">-13334.16</td>
+<td align="right">-13655.28</td>
 <td align="right">0.59</td>
 </tr>
 <tr class="even">
 <td align="left">linear</td>
-<td align="right">-13331.38</td>
-<td align="right">0.69</td>
+<td align="right">-13651.67</td>
+<td align="right">0.68</td>
 </tr>
 </tbody>
 </table>
-<pre><code><span><span class="co">#&gt; dOFV (linear - power) = +2.78 on 0 extra parameters</span></span></code></pre>
+<pre><code><span><span class="co">#&gt; dOFV (linear - power) = +3.62 on 0 extra parameters</span></span></code></pre>
 <p>The plot decides it.</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots_lin</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit_lin</span>, which <span class="op">=</span> <span class="st">"covariate"</span><span class="op">)</span></span></code></pre></div>
@@ -427,7 +427,7 @@ paper.</p>
 <p>A <strong>missing</strong> covariate shows up as a slope across the
 axis. A covariate with the <strong>wrong shape</strong> shows up as
 <strong>curvature</strong> — the linear model buys both ends by
-inflating <code>bcrcl</code> to 0.69, and then misses the middle. Mean
+inflating <code>bcrcl</code> to 0.68, and then misses the middle. Mean
 standardised residual by source, in order of increasing
 <code>CRCL</code> (38, 59, 95 mL/min):</p>
 <table class="table">
@@ -440,15 +440,15 @@ standardised residual by source, in order of increasing
 <tbody>
 <tr class="odd">
 <td>power (correct)</td>
-<td>+0.15</td>
-<td>+0.36</td>
-<td>+0.17</td>
+<td>+0.11</td>
+<td>-0.02</td>
+<td>+0.30</td>
 </tr>
 <tr class="even">
 <td>linear</td>
-<td>+0.20</td>
-<td>+0.25</td>
-<td>+0.26</td>
+<td>+0.17</td>
+<td>-0.14</td>
+<td>+0.39</td>
 </tr>
 </tbody>
 </table>
@@ -493,7 +493,7 @@ normal-function patient gets from 200 mg.</caption>
 </tr>
 <tr class="even">
 <td align="left">meta-analysis (admixr2)</td>
-<td align="right">77</td>
+<td align="right">78</td>
 </tr>
 <tr class="odd">
 <td align="left">nearest published model</td>
@@ -504,7 +504,7 @@ normal-function patient gets from 200 mg.</caption>
 <p>The nearest published model has no renal term, so it cannot adjust
 for her at all: it hands back the dose it was fitted at, for a cohort
 whose median renal function was 1.8 times hers. The meta-analysis lands
-within 1 mg of the truth, from three papers only one of which had a
+within 2 mg of the truth, from three papers only one of which had a
 renal term to contribute.</p>
 </div>
 <div class="section level2">

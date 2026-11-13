@@ -23,6 +23,8 @@ cohort it enrolled — and let admixr2 assemble the summary it implies.
 
 - [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
   : Write down a published study
+- [`doseBands()`](https://leidenpharmacology.github.io/admixr2/reference/doseBands.md)
+  : A dosing table by covariate band
 - [`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
   : Collect the studies a meta-analysis draws on
 - [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)

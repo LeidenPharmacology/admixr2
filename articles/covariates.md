@@ -23,8 +23,8 @@ across renal function and fitted one.
 | cohort   | median_CRCL | CL_at_70kg | V_at_70kg | sex_effect |
 |:---------|------------:|-----------:|----------:|-----------:|
 | normal   |          95 |      5.136 |    50.037 |      0.184 |
-| mild     |          59 |      4.926 |    49.984 |      0.158 |
-| moderate |          38 |      2.938 |    50.005 |      0.196 |
+| mild     |          59 |      5.142 |    49.980 |      0.119 |
+| moderate |          38 |      2.994 |    49.999 |      0.179 |
 
 Three independent analyses, three different models, each sound on its
 own data. {.table}
@@ -171,12 +171,12 @@ knitr::kable(data.frame(
 
 | parameter                         | truth | estimate |
 |:----------------------------------|------:|---------:|
-| CL at 70 kg, CRCL 90, women (L/h) |  5.00 |    4.987 |
-| V at 70 kg (L)                    | 50.00 |   50.060 |
-| renal exponent                    |  0.60 |    0.591 |
-| sex effect (log)                  |  0.18 |    0.180 |
-| additive SD (mg/L)                |  0.08 |    0.080 |
-| omega (eta.cl)                    |  0.05 |    0.065 |
+| CL at 70 kg, CRCL 90, women (L/h) |  5.00 |    5.050 |
+| V at 70 kg (L)                    | 50.00 |   50.016 |
+| renal exponent                    |  0.60 |    0.588 |
+| sex effect (log)                  |  0.18 |    0.162 |
+| additive SD (mg/L)                |  0.08 |    0.079 |
+| omega (eta.cl)                    |  0.05 |    0.048 |
 
 Recovered from three analyses, none of which contained a renal term.
 {.table}
@@ -188,7 +188,7 @@ published model rather than a sample, so there is no sampling law to
 build one from and admixr2 reports no standard error at all.
 
 The sex effect shows what pooling costs. The three trials reported 0.18,
-0.16, 0.20 for a quantity genuinely identical in all three; sampling
+0.12, 0.18 for a quantity genuinely identical in all three; sampling
 noise alone put them that far apart. Reconciling that is not free — some
 of it lands in the other parameters, which is why the renal exponent
 comes back a little below its truth.
@@ -234,13 +234,13 @@ and it decides nothing:
 
 | form            | objective | bcrcl |
 |:----------------|----------:|------:|
-| power (correct) | -13334.16 |  0.59 |
-| linear          | -13331.38 |  0.69 |
+| power (correct) | -13655.28 |  0.59 |
+| linear          | -13651.67 |  0.68 |
 
 Same parameter count, so no LRT – and the objectives barely differ.
 {.table}
 
-    #> dOFV (linear - power) = +2.78 on 0 extra parameters
+    #> dOFV (linear - power) = +3.62 on 0 extra parameters
 
 The plot decides it.
 
@@ -272,14 +272,14 @@ strata are together and each mark is a whole paper.
 
 A **missing** covariate shows up as a slope across the axis. A covariate
 with the **wrong shape** shows up as **curvature** — the linear model
-buys both ends by inflating `bcrcl` to 0.69, and then misses the middle.
+buys both ends by inflating `bcrcl` to 0.68, and then misses the middle.
 Mean standardised residual by source, in order of increasing `CRCL` (38,
 59, 95 mL/min):
 
 | form            | moderate | mild  | normal |
 |-----------------|----------|-------|--------|
-| power (correct) | +0.15    | +0.36 | +0.17  |
-| linear          | +0.20    | +0.25 | +0.26  |
+| power (correct) | +0.11    | -0.02 | +0.30  |
+| linear          | +0.17    | -0.14 | +0.39  |
 
 The linear row is a **U**: both extremes above zero, the middle pulled
 to zero. The power row has no such shape.
@@ -313,7 +313,7 @@ grey band is where the patient is, and no trial went there.
 | basis                   | dose_mg |
 |:------------------------|--------:|
 | the truth               |      76 |
-| meta-analysis (admixr2) |      77 |
+| meta-analysis (admixr2) |      78 |
 | nearest published model |     187 |
 
 Dose giving a CrCl 21 mL/min patient the exposure a normal-function
@@ -322,7 +322,7 @@ patient gets from 200 mg. {.table}
 The nearest published model has no renal term, so it cannot adjust for
 her at all: it hands back the dose it was fitted at, for a cohort whose
 median renal function was 1.8 times hers. The meta-analysis lands within
-1 mg of the truth, from three papers only one of which had a renal term
+2 mg of the truth, from three papers only one of which had a renal term
 to contribute.
 
 ## See also

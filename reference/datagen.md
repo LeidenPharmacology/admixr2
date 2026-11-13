@@ -22,7 +22,12 @@ datagen(studies, model = NULL, control = datagenControl())
 
 - studies:
 
-  A named list of study specifications. Each element is a list with:
+  An
+  [`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
+  (or single
+  [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md))
+  object, returned generated (`model` and `control` are then not used);
+  or a named list of study specifications. Each element is a list with:
 
   `model`
 
@@ -150,6 +155,22 @@ A named list with one element per study. Each element contains:
   `control$return_samples = TRUE`).
 
 ## Details
+
+**Most analyses should not call this directly.** Write each study with
+[`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+— `admStudy(model, est)` for a published model,
+`admStudy(model, est, simulated = TRUE)` for a trial you are simulating
+— and pass
+[`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
+to the fit, which generates them for you. Use `datagen()` to LOOK at
+what such studies imply (pass the
+[`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
+object and it returns the generated `E`/`V`; a covariate source is cut
+on every covariate it estimated, where a fit cuts only those its
+analysis model reads), or for what
+[`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+cannot yet express: several observed outputs (`observations`), the
+individual simulated samples, or a choice of moment method.
 
 With `control = datagenControl(method = "mc")` (the default) population
 moments are computed via the same Monte Carlo engine as `est = "admc"`:

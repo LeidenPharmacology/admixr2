@@ -79,7 +79,7 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.645      0.205     0    0.85 4.323
+elapsed    0.497      0.255     0   0.752 3.683
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
@@ -103,6 +103,7 @@ prop.cp
     or correlation (fit_plasma$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Information about run found (fit_plasma$runInfo):
+   • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
    • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.2e-07, cond 4.47e+06), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `prop.cp`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
    • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. 
   Censoring (fit_plasma$censInformation): No censoring
@@ -206,7 +207,7 @@ adgh -88.64046 -72.64046 -36.70254       44.32023
 ── Time (sec fit_cns$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.636      0.296     0   0.932  3.58
+elapsed    0.565      0.265     0    0.83 3.207
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
@@ -247,6 +248,7 @@ cor:om.eta.v1,om.eta.cl
     or correlation (fit_cns$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Information about run found (fit_cns$runInfo):
+   • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
    • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.5e-07, cond 4.01e+06), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `add.cb`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
   Censoring (fit_cns$censInformation): No censoring
   Minimization message (fit_cns$message):  

@@ -1,26 +1,29 @@
-# Generating aggregate data with datagen
+# Simulated trials and published models
 
-## When would you use `datagen`?
+## Two reasons to generate a study from a model
 
-Two situations call for generating aggregate data programmatically:
+A study can come from a model rather than from a figure, for two
+different reasons, and admixr2 treats them differently:
 
-**Simulation studies.** To check that an estimator recovers the truth:
-define a data-generating model with known parameters, call
+| You have | Write it as | Scored as | Standard errors |
+|----|----|----|----|
+| A trial you are **simulating** (a worked example, a recovery check, a design question) | `admStudy(model, est, simulated = TRUE)` | `n` sampled patients | yes |
+| A **published model** from a paper | `admStudy(model, est)` | the model it is; `n` sets its weight | no |
+
+Both are generated the same way — the model’s `E` and `V` for that
+design — and the difference is only in what is claimed. A simulated
+trial stands in for data, so it is scored the way digitised data would
+be. A published model is not a sample: its moments are exact functions
+of the paper’s parameters, and the parameter uncertainty a sampling law
+would need is not available, so a fit that includes one reports no
+standard errors.
+
 [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-for E and V, fit your analysis model, compare.
-
-**Published models as input.** Each published study was analysed with
-its own structural model — a different number of compartments, a
-different parameterisation, only some of the IIV terms.
-[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-turns such a model into the aggregate data it implies, making it a
-direct input alongside digitised summaries. Several of them in
-`admControl(studies = ...)` is a meta-analysis across the literature
-(see
-[`vignette("multiple-studies")`](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)).
-
-Either way the output is a named list of `(E, V, n, times, ev)` objects
-that plugs straight into `admControl(studies = ...)`.
+is the engine underneath. Pass it the studies to **look at** the `E` and
+`V` they imply, and use it directly for what
+[`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+does not express: several observed outputs, the individual simulated
+samples, and a choice of moment method (the last sections below).
 
 ## Simulation study: same model across studies
 
@@ -63,28 +66,40 @@ True parameter values: CL = 5 L/h, V = 10 L, ka = 1 h⁻¹; IIV of 0.3 (SD
 on log scale) for CL and 0.2 for V and ka; proportional residual error
 SD = 0.2.
 
-### Generating the data
+### Simulating the trials
 
-A top-level `model` is the default every study inherits, so each spec
-needs only `times`, `ev` and `n`:
+The model’s
+[`ini()`](https://nlmixr2.github.io/rxode2/reference/ini.html) holds the
+truth, so each trial needs only its design. Pass `est` to simulate at
+other values:
+
+``` r
+times <- c(0.5, 1, 2, 4, 8, 12, 24)
+
+low_dose  <- admStudy(model = true_model, n = 250, dose =  50, times = times,
+                      simulated = TRUE)
+high_dose <- admStudy(model = true_model, n = 250, dose = 100, times = times,
+                      simulated = TRUE)
+sim_studies <- admStudies(low_dose, high_dose)
+sim_studies
+admixr2 studies: 2  (0 published models, 2 simulated trials, 0 digitised)
+  low_dose       sim    n = 250    7 times
+  high_dose      sim    n = 250    7 times
+
+print() a single study to check its transcription.
+```
+
+[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+shows the data each trial contributes:
 
 ``` r
 
-times <- c(0.5, 1, 2, 4, 8, 12, 24)
-
-study_data <- datagen(
-  studies = list(
-    low_dose  = list(times = times, ev = rxode2::et(amt =  50), n = 250L),
-    high_dose = list(times = times, ev = rxode2::et(amt = 100), n = 250L)
-  ),
-  model   = true_model,
-  control = datagenControl(n_sim = 10000L, seed = 1L)
-)
+study_data <- datagen(sim_studies)
 
 # Each study returns E, V, n, times, ev
 names(study_data$low_dose)
-#> [1] "E"        "V"        "n"        "times"    "ev"       "v_denom"  ".adm_src"
-#> [8] "output"
+#> [1] "E"         "V"         "n"         "times"     "ev"        "v_denom"  
+#> [7] "output"    ".adm_spec"
 round(study_data$low_dose$E, 2)   # population mean at each time
 #>  0.5    1    2    4    8   12   24 
 #> 1.75 2.38 2.27 1.18 0.24 0.06 0.00
@@ -101,12 +116,12 @@ knitr::kable(round(study_data$low_dose$V, 3),
 
 |     |    0.5 |      1 |     2 |      4 |      8 |     12 |    24 |
 |:----|-------:|-------:|------:|-------:|-------:|-------:|------:|
-| 0.5 |  0.297 |  0.187 | 0.106 | -0.005 | -0.018 | -0.007 | 0.000 |
-| 1   |  0.187 |  0.461 | 0.171 |  0.051 |  0.001 | -0.001 | 0.000 |
-| 2   |  0.106 |  0.171 | 0.428 |  0.161 |  0.051 |  0.015 | 0.001 |
+| 0.5 |  0.297 |  0.187 | 0.107 | -0.005 | -0.018 | -0.007 | 0.000 |
+| 1   |  0.187 |  0.462 | 0.171 |  0.051 |  0.001 | -0.002 | 0.000 |
+| 2   |  0.107 |  0.171 | 0.429 |  0.161 |  0.051 |  0.015 | 0.001 |
 | 4   | -0.005 |  0.051 | 0.161 |  0.263 |  0.084 |  0.028 | 0.001 |
 | 8   | -0.018 |  0.001 | 0.051 |  0.084 |  0.047 |  0.016 | 0.001 |
-| 12  | -0.007 | -0.001 | 0.015 |  0.028 |  0.016 |  0.007 | 0.000 |
+| 12  | -0.007 | -0.002 | 0.015 |  0.028 |  0.016 |  0.007 | 0.000 |
 | 24  |  0.000 |  0.000 | 0.001 |  0.001 |  0.001 |  0.000 | 0.000 |
 
 Generated covariance matrix V for the low-dose study {.table}
@@ -146,9 +161,8 @@ drawn, but it reaches the estimator and enters the likelihood.
 
 ### Parameter recovery
 
-The generated data plug straight into `admControl(studies = ...)`. Using
-the same structural model for the analysis is what makes this a
-consistency check:
+The trials go straight into the fit. Using the same structural model for
+the analysis is what makes this a consistency check:
 
 ``` r
 
@@ -182,8 +196,8 @@ initialisation’s.
 fit_sim <- nlmixr2(
   analysis_model, admData(), est = "admc",
   control = admControl(
-    studies   = study_data,
-      maxeval = 300L
+    studies = sim_studies,
+    maxeval = 300L
   )
 )
 
@@ -191,42 +205,59 @@ print(fit_sim)
 ── nlmixr² admc ──
 
           OBJF       AIC       BIC Log-likelihood
-admc -7359.742 -7345.742 -7302.618       3679.871
+admc -7293.857 -7279.857 -7236.733       3646.928
 
 ── Time (sec fit_sim$time): ──
 
   optimize covariance other elapsed
-1   62.186          0     0  62.186
+1   37.267       8.44     0  45.707
 
 ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 
-                        Parameter     Est. SE %RSE Back-transformed(95%CI)
-tcl           Log clearance (L/h)    1.608                           4.991
-tv                 Log volume (L)    2.303                           10.00
-tka     Log absorption rate (1/h) 0.001072                           1.001
-prop.sd     Proportional error SD   0.2001                          0.2001
-        BSV(CV%) Shrink(SD)%
-tcl        30.41         NaN
-tv         19.60         NaN
-tka        20.88         NaN
-prop.sd                     
+                        Parameter     Est.       SE  %RSE
+tcl           Log clearance (L/h)    1.610  0.06543 4.065
+tv                 Log volume (L)    2.303  0.07394 3.211
+tka     Log absorption rate (1/h) 7.759e-4  0.07658  9870
+prop.sd     Proportional error SD   0.1998 0.007035 3.520
+        Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl        5.001 (4.399, 5.685)    30.76         NaN
+tv         10.00 (8.652, 11.56)    20.24         NaN
+tka       1.001 (0.8613, 1.163)    20.16         NaN
+prop.sd 0.1998 (0.1861, 0.2136)                     
  
+  Covariance Type (fit_sim$covMethod): r,s
+  Some strong fixed parameter correlations exist (fit_sim$cor) :
+                 cor:tv,tcl             cor:tka,tcl         cor:prop.sd,tcl 
+                -0.931                  -0.907                  -0.519  
+      cor:om.eta.cl,tcl        cor:om.eta.v,tcl       cor:om.eta.ka,tcl 
+                 0.957                  -0.560                   0.587  
+             cor:tka,tv          cor:prop.sd,tv        cor:om.eta.cl,tv 
+                 0.971                   0.572                  -0.947  
+        cor:om.eta.v,tv        cor:om.eta.ka,tv         cor:prop.sd,tka 
+                 0.545                  -0.589                   0.516  
+      cor:om.eta.cl,tka        cor:om.eta.v,tka       cor:om.eta.ka,tka 
+                -0.915                   0.498                  -0.547  
+  cor:om.eta.cl,prop.sd    cor:om.eta.v,prop.sd   cor:om.eta.ka,prop.sd 
+                -0.540                   0.299                  -0.375  
+ cor:om.eta.v,om.eta.cl cor:om.eta.ka,om.eta.cl  cor:om.eta.ka,om.eta.v 
+                -0.723                   0.738                  -0.938  
+ 
+
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit_sim$omega) 
     or correlation (fit_sim$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
+  Information about run found (fit_sim$runInfo):
+   • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
   Censoring (fit_sim$censInformation): No censoring
   Minimization message (fit_sim$message):  
-    NLOPT_FAILURE: Generic failure code. 
+    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 
-**No standard errors, and the blank `SE` / `%RSE` / `95%CI` columns are
-why.** A study generated from a model is not a sample: `n` is the source
-study’s true sample size, but the parameter uncertainty a sampling law
-would need is not available, so admixr2 sets `covMethod = "none"` and
-reports no uncertainty at all. Naming a `covMethod` explicitly is an
-error rather than an override. The columns are nlmixr2’s table; the
-emptiness is the answer.
+The `SE`, `%RSE` and `95%CI` columns are filled: a simulated trial is
+scored as 250 sampled patients, so the fit reports the uncertainty two
+trials of that size would carry. The same model entered as a
+**published** model (below) would leave those columns blank.
 
 Structural parameter estimates and the truth:
 
@@ -239,24 +270,27 @@ knitr::kable(
   data.frame(
     parameter = names(truth),
     truth     = round(exp(truth), 2),
-    estimate  = round(exp(est[names(truth)]), 2)
+    estimate  = round(exp(est[names(truth)]), 2),
+    `SE (log scale)` = signif(fit_sim$parFixedDf[names(truth), "SE"], 2),
+    check.names = FALSE
   ),
   row.names = FALSE, caption = "Structural parameter estimates vs true values")
 ```
 
-| parameter | truth | estimate |
-|:----------|------:|---------:|
-| tcl       |     5 |     4.99 |
-| tv        |    10 |    10.00 |
-| tka       |     1 |     1.00 |
+| parameter | truth | estimate | SE (log scale) |
+|:----------|------:|---------:|---------------:|
+| tcl       |     5 |        5 |          0.065 |
+| tv        |    10 |       10 |          0.074 |
+| tka       |     1 |        1 |          0.077 |
 
 Structural parameter estimates vs true values {.table}
 
 ## Literature workflow: per-study models
 
 Each publication comes with its own model — a 2016 paper with one
-compartment, a 2022 follow-up with two. A `model` inside a study spec
-overrides the top-level default:
+compartment, a 2022 follow-up with two. Each becomes one
+[`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md),
+carrying its own model:
 
 ``` r
 
@@ -315,25 +349,27 @@ apparent volume (V = 40 L), the later one resolved it (V₁ = 10 L, V₂ =
 30 L, Q = 10 L/h).
 
 ``` r
+early_study <- admStudy(model = model_1cmt, n = 120, dose = 100,
+                        times = c(0.5, 1, 2, 4, 8, 12))
+later_study <- admStudy(model = model_2cmt, n = 180, dose = 200,
+                        times = c(2, 4, 8, 12, 24))
+lit_studies <- admStudies(early_study, later_study)
+lit_studies
+admixr2 studies: 2  (2 published models, 0 digitised)
+  early_study    model  n = 120    6 times
+  later_study    model  n = 180    5 times
 
-lit_data <- datagen(
-  studies = list(
-    early_study = list(
-      model = model_1cmt,
-      times = c(0.5, 1, 2, 4, 8, 12),
-      ev    = rxode2::et(amt = 100),
-      n     = 120L
-    ),
-    later_study = list(
-      model = model_2cmt,
-      times = c(2, 4, 8, 12, 24),
-      ev    = rxode2::et(amt = 200),
-      n     = 180L
-    )
-  ),
-  control = datagenControl(n_sim = 10000L, seed = 2L)
-)
+NOTE: 'early_study', 'later_study' contribute as published MODELS, weighted as if `n` patients had been sampled -- `n` sets RELATIVE WEIGHT against the other studies, not precision. No standard error is reported for a fit that includes one.
+
+print() a single study to check its transcription.
+
+lit_data <- datagen(lit_studies)   # what each paper's model implies
 ```
+
+The [`ini()`](https://nlmixr2.github.io/rxode2/reference/ini.html)
+values stand in for each paper’s parameter table here; with a real
+paper, pass its estimates as `est` (see
+[`vignette("covariates")`](https://leidenpharmacology.github.io/admixr2/articles/covariates.md)).
 
 Same drug, same CL, different E profiles — the dosing and the
 distributional assumptions differ:
@@ -401,7 +437,7 @@ lit_analysis <- function() {
 fit_lit <- nlmixr2(
   lit_analysis, admData(), est = "admc",
   control = admControl(
-    studies   = lit_data,
+    studies   = lit_studies,
     n_sim     = 5000L,
     cov_n_sim = 10000L,
     seed      = 3L
@@ -418,9 +454,13 @@ them.
 
 ## Examining individual simulated samples
 
-`return_samples = TRUE` adds the raw `n_sim × n_times` prediction matrix
-to each study’s output — useful for inspecting the shape of the
-simulated distribution, or for custom summaries:
+The rest of this vignette calls
+[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+directly, on plain study lists, for what
+[`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+does not cover. `return_samples = TRUE` adds the raw `n_sim × n_times`
+prediction matrix to each study’s output — useful for inspecting the
+shape of the simulated distribution, or for custom summaries:
 
 ``` r
 
@@ -499,7 +539,7 @@ biased.
 
 - [Multiple
   studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)
-  — feed per-study models into a meta-analysis
+  — combine a digitised and a simulated trial
 - [From a published figure to E, V and
   n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md)
   — the other input type

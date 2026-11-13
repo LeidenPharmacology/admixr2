@@ -360,13 +360,13 @@ ctl2 <- adfoControl(grad = "analytical", maxeval = 1000L)
 
 # \donttest{
 library(rxode2)
-#> rxode2 5.1.7 using 2 threads (see ?getRxThreads)
+#> rxode2 5.1.8 using 2 threads (see ?getRxThreads)
 #>   no cache: create with `rxCreateCache()`
 library(nlmixr2)
 #> ── Attaching packages ───────────────────────────────────────── nlmixr2 7.0.1 ──
-#> ★ lotri        1.0.5      ★ nlmixr2est   7.1.0 
+#> ★ lotri        1.0.5      ★ nlmixr2est   7.2.1 
 #> ★ nlmixr2data  2.0.10     ★ nlmixr2extra 5.2.1 
-#> ★ nlmixr2save  0.2.0      ★ nlmixr2plot  5.1.0 
+#> ★ nlmixr2save  0.2.1      ★ nlmixr2plot  5.2.1 
 #> ── Optional Packages Not Installed ──────────────────────────── nlmixr2 7.0.1 ──
 #> ✖ babelmixr2     ✖ nlmixr2targets
 #> ✖ FME     ✖ nonmem2rx
@@ -441,9 +441,16 @@ fit <- nlmixr2(
 #> | 0010     |  1768.15 |    4.967 |    29.88 |   0.2587 |   0.0888 |  0.04603 |
 #> | 0020     |   862.47 |    6.391 |    37.74 |   0.3864 |  0.08003 |   0.0422 |
 #> | 0029 ✓   |   861.90 |    6.384 |    38.03 |     0.39 |  0.08051 |  0.04074 |
-#> | 0.9 sec  |          |          |          |          |          |          |
+#> | 0.6 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, Analytical-Hessian, sandwich, 6 gradient evaluations)
+#>  
+#>  
+#> Registered S3 method overwritten by 'minqa':
+#>   method      from     
+#>   print.minqa RcppTrust
 #> → compress origData in nlmixr2 object, save 1160
+#>  
+#>  
 #>  
 #>  
 print(fit)
@@ -455,7 +462,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>         optimize covariance other elapsed other
-#> elapsed    0.896       0.45     0   1.346 4.471
+#> elapsed    0.641      0.386     0   1.027 3.439
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
@@ -479,6 +486,8 @@ print(fit)
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
+#>   Information about run found (fit$runInfo):
+#>    • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  
 #>     NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. 

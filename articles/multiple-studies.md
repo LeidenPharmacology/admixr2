@@ -30,20 +30,25 @@ library(ggplot2)
 # Trial A: 500 subjects at 100 mg, richly sampled. Individual records, reduced
 # to the E, V and n a publication would print.
 dv_mat  <- admVignetteDvMatrix()      # 500 subjects x 9 times
-trial_a <- admVignetteStats(dv_mat)
-times_a <- trial_a$times
+stats_a <- admVignetteStats(dv_mat)
+times_a <- stats_a$times
+trial_a <- admStudy(E = stats_a$E, V = stats_a$V, n = stats_a$n,
+                    times = times_a, dose = 100)
 
-# Trial B: published as summary statistics only -- 120 subjects at 200 mg, four
-# sampling times. datagen() turns its model into the aggregate data it implies,
-# which is what makes a published study a direct input; see vignette("datagen").
+# Trial B: 120 subjects at 200 mg, four sampling times. SIMULATED here from
+# the model examplomycin came from, so it is scored as 120 sampled patients
+# (with standard errors), just as a digitised summary would be.
 times_b <- c(0.5, 2, 6, 12)
-trial_b <- datagen(
-  studies = list(b = list(times = times_b,
-                          ev    = rxode2::et(amt = 200),
-                          n     = 120L)),
-  model   = admVignetteModel,
-  control = datagenControl(n_sim = 10000L, seed = 1L)
-)$b
+trial_b <- admStudy(model = admVignetteModel, n = 120, dose = 200,
+                    times = times_b, simulated = TRUE)
+
+studies <- admStudies(trial_a, trial_b)
+studies
+#> admixr2 studies: 2  (0 published models, 1 simulated trial, 1 digitised)
+#>   trial_a        data   n = 500    9 times
+#>   trial_b        sim    n = 120    4 times
+#> 
+#> print() a single study to check its transcription.
 ```
 
 `admVignetteDvMatrix()` and `admVignetteStats()` come from this
@@ -52,25 +57,32 @@ per subject, the second takes `E`, `V` and `n` off it.
 
 Trial B is simulated here so the vignette has a second study to combine;
 in practice its `E`, `V` and `n` would be digitised from the paper
-([`vignette("aggregate-data")`](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md))
-or derived from the model the paper published.
+([`vignette("aggregate-data")`](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md)),
+or the paper’s published model would be entered with
+`admStudy(model, est)` — which then contributes as a model, without
+standard errors
+([`vignette("datagen")`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)).
 
 ## Comparing the two observed profiles
 
 The two are on different doses, so they should *not* lie on top of each
 other — that separation is the information a joint fit uses.
 
+[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+shows the `E` and `V` each study contributes:
+
 ``` r
 
+gen <- datagen(studies)
 df_obs <- rbind(
   data.frame(trial = "Trial A (100 mg, n = 500)", time = times_a,
-             mean = trial_a$E,
-             lo   = trial_a$E - sqrt(diag(trial_a$V)),
-             hi   = trial_a$E + sqrt(diag(trial_a$V))),
+             mean = gen$trial_a$E,
+             lo   = gen$trial_a$E - sqrt(diag(gen$trial_a$V)),
+             hi   = gen$trial_a$E + sqrt(diag(gen$trial_a$V))),
   data.frame(trial = "Trial B (200 mg, n = 120)", time = times_b,
-             mean = trial_b$E,
-             lo   = trial_b$E - sqrt(diag(trial_b$V)),
-             hi   = trial_b$E + sqrt(diag(trial_b$V)))
+             mean = gen$trial_b$E,
+             lo   = gen$trial_b$E - sqrt(diag(gen$trial_b$V)),
+             hi   = gen$trial_b$E + sqrt(diag(gen$trial_b$V)))
 )
 
 ggplot(df_obs, aes(x = time, y = mean, colour = trial, fill = trial)) +
@@ -110,19 +122,14 @@ pk_model <- admVignetteModel
 
 ## Fitting with two studies
 
-Pass both trials as a named list. Each entry carries its own `times`,
-`ev`, `V`, `n` and `method`, which is what lets them differ:
+Pass the collection. Each study carries its own `times`, dose, `V` and
+`n`, which is what lets them differ:
 
 ``` r
 fit_multi <- nlmixr2(
   pk_model, admData(), est = "admc",
   control = admControl(
-    studies = list(
-      trial_a = list(E = trial_a$E, V = trial_a$V, n = trial_a$n,
-                     times = times_a, ev = rxode2::et(amt = 100)),
-      trial_b = list(E = trial_b$E, V = trial_b$V, n = trial_b$n,
-                     times = times_b, ev = rxode2::et(amt = 200))
-    ),
+    studies   = studies,
     n_sim     = 5000L,
     cov_n_sim = 10000L,
     maxeval   = 300L,
@@ -134,79 +141,81 @@ print(fit_multi)
 ── nlmixr² admc ──
 
           OBJF       AIC       BIC Log-likelihood
-admc -3351.844 -3329.844 -3258.199       1675.922
+admc -3351.412 -3329.412 -3257.767       1675.706
 
 ── Time (sec fit_multi$time): ──
 
   optimize covariance other elapsed
-1   68.437      30.52     0  98.957
+1   47.511     20.671     0  68.182
 
 ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 
                                   Parameter    Est.       SE  %RSE
 tcl                    Log clearance (L/hr)   1.603  0.01771 1.105
-tv1                  Log central volume (L)   2.328   0.1293 5.552
-tv2               Log peripheral volume (L)   3.398  0.04947 1.456
-tq        Log inter-compartmental CL (L/hr)   2.281  0.02542 1.114
-tka     Log absorption rate constant (1/hr) 0.02919   0.1192 408.2
-prop.sd      Proportional residual error SD  0.1900 0.003277 1.725
+tv1                  Log central volume (L)   2.328   0.1290 5.542
+tv2               Log peripheral volume (L)   3.398  0.04941 1.454
+tq        Log inter-compartmental CL (L/hr)   2.281  0.02543 1.115
+tka     Log absorption rate constant (1/hr) 0.02909   0.1189 408.8
+prop.sd      Proportional residual error SD  0.1900 0.003278 1.725
         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl        4.967 (4.797, 5.142)    32.32         NaN
-tv1        10.26 (7.963, 13.22)    32.98         NaN
-tv2        29.90 (27.14, 32.95)    32.07         NaN
-tq         9.789 (9.314, 10.29)    33.66         NaN
-tka       1.030 (0.8152, 1.301)    31.79         NaN
+tcl        4.967 (4.797, 5.142)    32.33         NaN
+tv1        10.26 (7.966, 13.21)    32.99         NaN
+tv2        29.90 (27.14, 32.94)    32.08         NaN
+tq         9.790 (9.314, 10.29)    33.66         NaN
+tka       1.030 (0.8155, 1.300)    31.78         NaN
 prop.sd 0.1900 (0.1835, 0.1964)                     
  
   Covariance Type (fit_multi$covMethod): r,s
   Some strong fixed parameter correlations exist (fit_multi$cor) :
                 cor:tv1,tcl             cor:tv2,tcl              cor:tq,tcl 
-                 0.342                  -0.508                   0.202  
+                 0.341                  -0.508                   0.202  
             cor:tka,tcl         cor:prop.sd,tcl       cor:om.eta.cl,tcl 
-                 0.367                  0.0553                 -0.0961  
+                 0.366                  0.0553                 -0.0960  
       cor:om.eta.v1,tcl       cor:om.eta.v2,tcl        cor:om.eta.q,tcl 
-                -0.322                  -0.191                   0.249  
+                -0.321                  -0.192                   0.249  
       cor:om.eta.ka,tcl             cor:tv2,tv1              cor:tq,tv1 
-                 0.305                  -0.856                   0.211  
+                 0.304                  -0.855                   0.212  
             cor:tka,tv1         cor:prop.sd,tv1       cor:om.eta.cl,tv1 
-                 0.984                 -0.0463                -0.00151  
+                 0.984                 -0.0463                -0.00149  
       cor:om.eta.v1,tv1       cor:om.eta.v2,tv1        cor:om.eta.q,tv1 
-                -0.683                  0.0883                   0.500  
+                -0.682                  0.0879                   0.499  
       cor:om.eta.ka,tv1              cor:tq,tv2             cor:tka,tv2 
-                 0.701                  -0.247                  -0.861  
+                 0.699                  -0.247                  -0.860  
         cor:prop.sd,tv2       cor:om.eta.cl,tv2       cor:om.eta.v1,tv2 
-                0.0142                  0.0456                   0.632  
+                0.0142                  0.0456                   0.630  
       cor:om.eta.v2,tv2        cor:om.eta.q,tv2       cor:om.eta.ka,tv2 
-                0.0501                  -0.438                  -0.648  
+                0.0508                  -0.437                  -0.646  
              cor:tka,tq          cor:prop.sd,tq        cor:om.eta.cl,tq 
-                 0.253                 -0.0202                 -0.0463  
+                 0.254                 -0.0203                 -0.0463  
        cor:om.eta.v1,tq        cor:om.eta.v2,tq         cor:om.eta.q,tq 
-                -0.111                  0.0774                   0.337  
+                -0.110                  0.0773                   0.337  
        cor:om.eta.ka,tq         cor:prop.sd,tka       cor:om.eta.cl,tka 
-                0.0402                 -0.0492                -0.00304  
+                0.0399                 -0.0492                -0.00303  
       cor:om.eta.v1,tka       cor:om.eta.v2,tka        cor:om.eta.q,tka 
-                -0.675                  0.0835                   0.528  
+                -0.673                  0.0831                   0.527  
       cor:om.eta.ka,tka   cor:om.eta.cl,prop.sd   cor:om.eta.v1,prop.sd 
-                 0.689                 -0.0340                 -0.0251  
+                 0.688                 -0.0340                 -0.0252  
   cor:om.eta.v2,prop.sd    cor:om.eta.q,prop.sd   cor:om.eta.ka,prop.sd 
-                -0.221                  -0.188                 -0.0106  
+                -0.221                  -0.188                 -0.0105  
 cor:om.eta.v1,om.eta.cl cor:om.eta.v2,om.eta.cl  cor:om.eta.q,om.eta.cl 
-                0.0335                  -0.161                 0.00154  
+                0.0335                  -0.161                 0.00155  
 cor:om.eta.ka,om.eta.cl cor:om.eta.v2,om.eta.v1  cor:om.eta.q,om.eta.v1 
-               -0.0291                 -0.0495                  -0.260  
+               -0.0292                 -0.0491                  -0.259  
 cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2 
-                -0.897                  -0.103                  0.0636  
+                -0.897                  -0.103                  0.0632  
  cor:om.eta.ka,om.eta.q 
-                 0.225  
+                 0.223  
  
 
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit_multi$omega) 
     or correlation (fit_multi$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
+  Information about run found (fit_multi$runInfo):
+   • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
   Censoring (fit_multi$censInformation): No censoring
   Minimization message (fit_multi$message):  
-    NLOPT_FAILURE: Generic failure code. 
+    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 
 Nothing above assumes the two share a dose or a schedule. The objective

@@ -27,8 +27,8 @@ source enrolled.
 
 - [From a published figure to E, V and
   n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md):
-- [Generating aggregate data with
-  datagen](https://leidenpharmacology.github.io/admixr2/articles/datagen.md):
+- [Simulated trials and published
+  models](https://leidenpharmacology.github.io/admixr2/articles/datagen.md):
 - [Covariates](https://leidenpharmacology.github.io/admixr2/articles/covariates.md):
 
 ### Meta-analysis across studies

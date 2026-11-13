@@ -29,7 +29,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.1</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.2</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -90,7 +90,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>From a published figure to E, V and n</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/aggregate-data.Rmd" class="external-link"><code>vignettes/aggregate-data.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.2/vignettes/aggregate-data.Rmd" class="external-link"><code>vignettes/aggregate-data.Rmd</code></a></small>
       <div class="d-none name"><code>aggregate-data.Rmd</code></div>
     </div>
 
@@ -224,12 +224,21 @@ SEM band is obviously too tight to be a between-subject spread.</p>
 <span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/theme.html" class="external-link">theme</a></span><span class="op">(</span>panel.grid.minor <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_blank</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>        strip.text <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_text</a></span><span class="op">(</span>face <span class="op">=</span> <span class="st">"bold"</span>, size <span class="op">=</span> <span class="fl">10</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
 <p><img src="aggregate-data_files/figure-html/band-plot-1.png" class="r-plt" alt="" width="840"></p>
-<p>Passing <code>V</code> as a plain vector of variances is enough;
-admixr2 expands it to a diagonal matrix and sets
+<p>Write the arm down with <code><a href="../reference/admStudy.html">admStudy()</a></code>, giving the spread as
+the <code>sd</code> it is. One SD per time point is enough; admixr2
+builds a diagonal <code>V</code> from it and sets
 <code>method = "var"</code>:</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">study</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E</span>, V <span class="op">=</span> <span class="va">SD</span><span class="op">^</span><span class="fl">2</span>, n <span class="op">=</span> <span class="va">n</span>, times <span class="op">=</span> <span class="va">times</span>,</span>
-<span>              ev <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">50</span>, cmt <span class="op">=</span> <span class="st">"central"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a>study <span class="ot">&lt;-</span> <span class="fu">admStudy</span>(<span class="at">E =</span> E, <span class="at">sd =</span> SD, <span class="at">n =</span> n, <span class="at">times =</span> times,</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a>                  <span class="at">ev =</span> rxode2<span class="sc">::</span><span class="fu">et</span>(<span class="at">amt =</span> <span class="dv">50</span>, <span class="at">cmt =</span> <span class="st">"central"</span>))</span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>study</span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a>admixr2 study <span class="st">'study'</span>  <span class="sc">--</span> digitised DATA</span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a>  design    n <span class="ot">=</span> <span class="dv">60</span>, event table, <span class="dv">7</span> <span class="fu">times</span> (<span class="fl">0.5</span> <span class="sc">-</span> <span class="dv">24</span>)</span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a>  V scale   unbiased <span class="fu">denominator</span>  (published spread; converted to ML <span class="cf">for</span> the fit)</span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a>  reported  mean profile, per<span class="sc">-</span>time spread</span></code></pre></div>
+<p><code><a href="../reference/admStudy.html">admStudy()</a></code> would equally take the plotted bars as they
+are, <code>sem = SEM</code>, and do the <code>sqrt(n)</code> conversion
+itself. Converting by hand above is only to show what that conversion
+is.</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pk_model</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span>
@@ -248,47 +257,49 @@ admixr2 expands it to a diagonal matrix and sets
 <span>  <span class="op">}</span><span class="op">)</span></span>
 <span><span class="op">}</span></span></code></pre></div>
 <div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">nlmixr2</span>(pk_model, <span class="fu">admData</span>(), <span class="at">est =</span> <span class="st">"adgh"</span>,</span>
-<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>               <span class="at">control =</span> <span class="fu">adghControl</span>(<span class="at">studies =</span> <span class="fu">list</span>(<span class="at">mg50 =</span> study)))</span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>               <span class="at">control =</span> <span class="fu">adghControl</span>(<span class="at">studies =</span> <span class="fu">admStudies</span>(<span class="at">mg50 =</span> study)))</span>
 <span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>fit</span>
 <span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a>── nlmixr² adgh ──</span>
 <span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a></span>
 <span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a>          OBJF       AIC       BIC Log<span class="sc">-</span>likelihood</span>
-<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>adgh <span class="sc">-</span><span class="fl">1323.144</span> <span class="sc">-</span><span class="fl">1313.144</span> <span class="sc">-</span><span class="fl">1292.943</span>       <span class="fl">661.5719</span></span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>adgh <span class="sc">-</span><span class="fl">1330.198</span> <span class="sc">-</span><span class="fl">1320.198</span> <span class="sc">-</span><span class="fl">1299.997</span>       <span class="fl">665.0992</span></span>
 <span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a></span>
 <span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a></span>
 <span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed    <span class="fl">0.478</span>      <span class="fl">0.167</span>     <span class="dv">0</span>   <span class="fl">0.645</span> <span class="fl">3.332</span></span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed    <span class="fl">0.437</span>      <span class="fl">0.138</span>     <span class="dv">0</span>   <span class="fl">0.575</span> <span class="fl">2.415</span></span>
 <span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a></span>
 <span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a></span>
 <span id="cb7-16"><a href="#cb7-16" tabindex="-1"></a>                          Parameter    Est.      SE   %RSE</span>
-<span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a>tcl             Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)   <span class="fl">1.556</span> <span class="fl">0.03364</span>  <span class="fl">2.162</span></span>
-<span id="cb7-18"><a href="#cb7-18" tabindex="-1"></a>tv                   Log <span class="fu">volume</span> (L)   <span class="fl">3.911</span> <span class="fl">0.02645</span> <span class="fl">0.6762</span></span>
-<span id="cb7-19"><a href="#cb7-19" tabindex="-1"></a>prop.cp Proportional residual error <span class="fl">0.09732</span> <span class="fl">0.05383</span>  <span class="fl">55.31</span></span>
-<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a>            Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
-<span id="cb7-21"><a href="#cb7-21" tabindex="-1"></a>tcl            <span class="fl">4.738</span> (<span class="fl">4.436</span>, <span class="fl">5.061</span>)    <span class="fl">25.77</span>         <span class="cn">NaN</span></span>
-<span id="cb7-22"><a href="#cb7-22" tabindex="-1"></a>tv             <span class="fl">49.96</span> (<span class="fl">47.44</span>, <span class="fl">52.62</span>)    <span class="fl">19.68</span>         <span class="cn">NaN</span></span>
-<span id="cb7-23"><a href="#cb7-23" tabindex="-1"></a>prop.cp <span class="fl">0.09732</span> (<span class="sc">-</span><span class="fl">0.008190</span>, <span class="fl">0.2028</span>)                     </span>
+<span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a>tcl             Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)   <span class="fl">1.556</span> <span class="fl">0.03339</span>  <span class="fl">2.146</span></span>
+<span id="cb7-18"><a href="#cb7-18" tabindex="-1"></a>tv                   Log <span class="fu">volume</span> (L)   <span class="fl">3.911</span> <span class="fl">0.02632</span> <span class="fl">0.6729</span></span>
+<span id="cb7-19"><a href="#cb7-19" tabindex="-1"></a>prop.cp Proportional residual error <span class="fl">0.09518</span> <span class="fl">0.05512</span>  <span class="fl">57.91</span></span>
+<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a>           Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
+<span id="cb7-21"><a href="#cb7-21" tabindex="-1"></a>tcl           <span class="fl">4.738</span> (<span class="fl">4.438</span>, <span class="fl">5.059</span>)    <span class="fl">25.59</span>         <span class="cn">NaN</span></span>
+<span id="cb7-22"><a href="#cb7-22" tabindex="-1"></a>tv            <span class="fl">49.96</span> (<span class="fl">47.45</span>, <span class="fl">52.61</span>)    <span class="fl">19.61</span>         <span class="cn">NaN</span></span>
+<span id="cb7-23"><a href="#cb7-23" tabindex="-1"></a>prop.cp <span class="fl">0.09518</span> (<span class="sc">-</span><span class="fl">0.01284</span>, <span class="fl">0.2032</span>)                     </span>
 <span id="cb7-24"><a href="#cb7-24" tabindex="-1"></a> </span>
 <span id="cb7-25"><a href="#cb7-25" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit<span class="sc">$</span>covMethod)<span class="sc">:</span> r,s</span>
 <span id="cb7-26"><a href="#cb7-26" tabindex="-1"></a>  Some strong fixed parameter correlations <span class="fu">exist</span> (fit<span class="sc">$</span>cor) <span class="sc">:</span></span>
 <span id="cb7-27"><a href="#cb7-27" tabindex="-1"></a>                cor<span class="sc">:</span>tv,tcl        cor<span class="sc">:</span>prop.cp,tcl      cor<span class="sc">:</span>om.eta.cl,tcl </span>
-<span id="cb7-28"><a href="#cb7-28" tabindex="-1"></a>               <span class="fl">0.0148</span>                <span class="sc">-</span><span class="fl">0.0733</span>                 <span class="fl">0.0492</span>  </span>
+<span id="cb7-28"><a href="#cb7-28" tabindex="-1"></a>               <span class="fl">0.0147</span>                <span class="sc">-</span><span class="fl">0.0751</span>                 <span class="fl">0.0512</span>  </span>
 <span id="cb7-29"><a href="#cb7-29" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.v,tcl         cor<span class="sc">:</span>prop.cp,tv       cor<span class="sc">:</span>om.eta.cl,tv </span>
-<span id="cb7-30"><a href="#cb7-30" tabindex="-1"></a>               <span class="fl">0.0447</span>                 <span class="sc">-</span><span class="fl">0.138</span>                 <span class="fl">0.0845</span>  </span>
+<span id="cb7-30"><a href="#cb7-30" tabindex="-1"></a>               <span class="fl">0.0467</span>                 <span class="sc">-</span><span class="fl">0.138</span>                 <span class="fl">0.0847</span>  </span>
 <span id="cb7-31"><a href="#cb7-31" tabindex="-1"></a>       cor<span class="sc">:</span>om.eta.v,tv  cor<span class="sc">:</span>om.eta.cl,prop.cp   cor<span class="sc">:</span>om.eta.v,prop.cp </span>
-<span id="cb7-32"><a href="#cb7-32" tabindex="-1"></a>                <span class="fl">0.117</span>                 <span class="sc">-</span><span class="fl">0.592</span>                 <span class="sc">-</span><span class="fl">0.831</span>  </span>
+<span id="cb7-32"><a href="#cb7-32" tabindex="-1"></a>                <span class="fl">0.118</span>                 <span class="sc">-</span><span class="fl">0.603</span>                 <span class="sc">-</span><span class="fl">0.834</span>  </span>
 <span id="cb7-33"><a href="#cb7-33" tabindex="-1"></a>cor<span class="sc">:</span>om.eta.v,om.eta.cl </span>
-<span id="cb7-34"><a href="#cb7-34" tabindex="-1"></a>                <span class="fl">0.469</span>  </span>
+<span id="cb7-34"><a href="#cb7-34" tabindex="-1"></a>                <span class="fl">0.482</span>  </span>
 <span id="cb7-35"><a href="#cb7-35" tabindex="-1"></a> </span>
 <span id="cb7-36"><a href="#cb7-36" tabindex="-1"></a></span>
 <span id="cb7-37"><a href="#cb7-37" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
 <span id="cb7-38"><a href="#cb7-38" tabindex="-1"></a>  Full BSV <span class="fu">covariance</span> (fit<span class="sc">$</span>omega) or <span class="fu">correlation</span> (fit<span class="sc">$</span>omegaR; <span class="at">diagonals=</span>SDs) </span>
 <span id="cb7-39"><a href="#cb7-39" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> fit<span class="sc">$</span>shrink </span>
-<span id="cb7-40"><a href="#cb7-40" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
-<span id="cb7-41"><a href="#cb7-41" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit<span class="sc">$</span>message)<span class="sc">:</span>  </span>
-<span id="cb7-42"><a href="#cb7-42" tabindex="-1"></a>    NLOPT_FTOL_REACHED<span class="sc">:</span> Optimization stopped because ftol_rel or <span class="fu">ftol_abs</span> (above) was reached. </span></code></pre></div>
+<span id="cb7-40"><a href="#cb7-40" tabindex="-1"></a>  Information about run <span class="fu">found</span> (fit<span class="sc">$</span>runInfo)<span class="sc">:</span></span>
+<span id="cb7-41"><a href="#cb7-41" tabindex="-1"></a>   • <span class="st">"r,s"</span> covariance is conditional on the ETAs; <span class="fu">setCov</span>() is marginal </span>
+<span id="cb7-42"><a href="#cb7-42" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
+<span id="cb7-43"><a href="#cb7-43" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit<span class="sc">$</span>message)<span class="sc">:</span>  </span>
+<span id="cb7-44"><a href="#cb7-44" tabindex="-1"></a>    NLOPT_FTOL_REACHED<span class="sc">:</span> Optimization stopped because ftol_rel or <span class="fu">ftol_abs</span> (above) was reached. </span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="what-reading-sem-as-sd-costs">What reading SEM as SD costs<a class="anchor" aria-label="anchor" href="#what-reading-sem-as-sd-costs"></a>
@@ -298,41 +309,41 @@ an <code>SD</code>, so <code>V</code> is <code>n</code>-fold too
 small.</p>
 <div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>fit_wrong <span class="ot">&lt;-</span> <span class="fu">nlmixr2</span>(</span>
 <span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a>  pk_model, <span class="fu">admData</span>(), <span class="at">est =</span> <span class="st">"adgh"</span>,</span>
-<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a>  <span class="at">control =</span> <span class="fu">adghControl</span>(<span class="at">studies =</span> <span class="fu">list</span>(</span>
-<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a>    <span class="at">mg50 =</span> <span class="fu">list</span>(<span class="at">E =</span> E, <span class="at">V =</span> SEM<span class="sc">^</span><span class="dv">2</span>, <span class="at">n =</span> n, <span class="at">times =</span> times,   <span class="co"># WRONG: SEM^2 as V</span></span>
-<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a>                <span class="at">ev =</span> rxode2<span class="sc">::</span><span class="fu">et</span>(<span class="at">amt =</span> <span class="dv">50</span>, <span class="at">cmt =</span> <span class="st">"central"</span>)))))</span>
+<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a>  <span class="at">control =</span> <span class="fu">adghControl</span>(<span class="at">studies =</span> <span class="fu">admStudies</span>(</span>
+<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a>    <span class="at">mg50 =</span> <span class="fu">admStudy</span>(<span class="at">E =</span> E, <span class="at">sd =</span> SEM, <span class="at">n =</span> n, <span class="at">times =</span> times,   <span class="co"># WRONG: SEM as SD</span></span>
+<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a>                    <span class="at">ev =</span> rxode2<span class="sc">::</span><span class="fu">et</span>(<span class="at">amt =</span> <span class="dv">50</span>, <span class="at">cmt =</span> <span class="st">"central"</span>)))))</span>
 <span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a>fit_wrong</span>
 <span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>── nlmixr² adgh ──</span>
 <span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a></span>
-<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a>          OBJF       AIC       BIC Log<span class="sc">-</span>likelihood</span>
-<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a>adgh <span class="sc">-</span><span class="fl">2942.688</span> <span class="sc">-</span><span class="fl">2932.688</span> <span class="sc">-</span><span class="fl">2912.487</span>       <span class="fl">1471.344</span></span>
+<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a>         OBJF      AIC       BIC Log<span class="sc">-</span>likelihood</span>
+<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a>adgh <span class="sc">-</span><span class="fl">2948.24</span> <span class="sc">-</span><span class="fl">2938.24</span> <span class="sc">-</span><span class="fl">2918.039</span>        <span class="fl">1474.12</span></span>
 <span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a></span>
 <span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_wrong<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a></span>
 <span id="cb8-14"><a href="#cb8-14" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a>elapsed      <span class="fl">0.7</span>      <span class="fl">0.138</span>     <span class="dv">0</span>   <span class="fl">0.838</span> <span class="fl">0.039</span></span>
+<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a>elapsed    <span class="fl">0.416</span>      <span class="fl">0.096</span>     <span class="dv">0</span>   <span class="fl">0.512</span> <span class="fl">0.166</span></span>
 <span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a></span>
 <span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_wrong<span class="sc">$</span>parFixed or fit_wrong<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb8-18"><a href="#cb8-18" tabindex="-1"></a></span>
 <span id="cb8-19"><a href="#cb8-19" tabindex="-1"></a>                          Parameter     Est.       SE   %RSE</span>
-<span id="cb8-20"><a href="#cb8-20" tabindex="-1"></a>tcl             Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)    <span class="fl">1.558</span> <span class="fl">0.005669</span> <span class="fl">0.3639</span></span>
-<span id="cb8-21"><a href="#cb8-21" tabindex="-1"></a>tv                   Log <span class="fu">volume</span> (L)    <span class="fl">3.908</span> <span class="fl">0.004580</span> <span class="fl">0.1172</span></span>
-<span id="cb8-22"><a href="#cb8-22" tabindex="-1"></a>prop.cp Proportional residual error <span class="fl">0.008208</span> <span class="fl">0.003649</span>  <span class="fl">44.46</span></span>
+<span id="cb8-20"><a href="#cb8-20" tabindex="-1"></a>tcl             Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)    <span class="fl">1.558</span> <span class="fl">0.005641</span> <span class="fl">0.3621</span></span>
+<span id="cb8-21"><a href="#cb8-21" tabindex="-1"></a>tv                   Log <span class="fu">volume</span> (L)    <span class="fl">3.908</span> <span class="fl">0.004554</span> <span class="fl">0.1165</span></span>
+<span id="cb8-22"><a href="#cb8-22" tabindex="-1"></a>prop.cp Proportional residual error <span class="fl">0.008208</span> <span class="fl">0.003604</span>  <span class="fl">43.91</span></span>
 <span id="cb8-23"><a href="#cb8-23" tabindex="-1"></a>             Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
-<span id="cb8-24"><a href="#cb8-24" tabindex="-1"></a>tcl             <span class="fl">4.749</span> (<span class="fl">4.696</span>, <span class="fl">4.802</span>)    <span class="fl">4.181</span>         <span class="cn">NaN</span></span>
-<span id="cb8-25"><a href="#cb8-25" tabindex="-1"></a>tv              <span class="fl">49.79</span> (<span class="fl">49.34</span>, <span class="fl">50.24</span>)    <span class="fl">2.935</span>         <span class="cn">NaN</span></span>
-<span id="cb8-26"><a href="#cb8-26" tabindex="-1"></a>prop.cp <span class="fl">0.008208</span> (<span class="fl">0.001056</span>, <span class="fl">0.01536</span>)                     </span>
+<span id="cb8-24"><a href="#cb8-24" tabindex="-1"></a>tcl             <span class="fl">4.748</span> (<span class="fl">4.696</span>, <span class="fl">4.801</span>)    <span class="fl">4.159</span>         <span class="cn">NaN</span></span>
+<span id="cb8-25"><a href="#cb8-25" tabindex="-1"></a>tv              <span class="fl">49.79</span> (<span class="fl">49.34</span>, <span class="fl">50.23</span>)    <span class="fl">2.910</span>         <span class="cn">NaN</span></span>
+<span id="cb8-26"><a href="#cb8-26" tabindex="-1"></a>prop.cp <span class="fl">0.008208</span> (<span class="fl">0.001144</span>, <span class="fl">0.01527</span>)                     </span>
 <span id="cb8-27"><a href="#cb8-27" tabindex="-1"></a> </span>
 <span id="cb8-28"><a href="#cb8-28" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit_wrong<span class="sc">$</span>covMethod)<span class="sc">:</span> r,s</span>
 <span id="cb8-29"><a href="#cb8-29" tabindex="-1"></a>  Some strong fixed parameter correlations <span class="fu">exist</span> (fit_wrong<span class="sc">$</span>cor) <span class="sc">:</span></span>
 <span id="cb8-30"><a href="#cb8-30" tabindex="-1"></a>                cor<span class="sc">:</span>tv,tcl        cor<span class="sc">:</span>prop.cp,tcl      cor<span class="sc">:</span>om.eta.cl,tcl </span>
-<span id="cb8-31"><a href="#cb8-31" tabindex="-1"></a>               <span class="fl">0.0139</span>                 <span class="sc">-</span><span class="fl">0.780</span>                  <span class="fl">0.118</span>  </span>
+<span id="cb8-31"><a href="#cb8-31" tabindex="-1"></a>               <span class="fl">0.0135</span>                 <span class="sc">-</span><span class="fl">0.780</span>                  <span class="fl">0.118</span>  </span>
 <span id="cb8-32"><a href="#cb8-32" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.v,tcl         cor<span class="sc">:</span>prop.cp,tv       cor<span class="sc">:</span>om.eta.cl,tv </span>
-<span id="cb8-33"><a href="#cb8-33" tabindex="-1"></a>                <span class="fl">0.269</span>                 <span class="sc">-</span><span class="fl">0.209</span>                 <span class="sc">-</span><span class="fl">0.493</span>  </span>
+<span id="cb8-33"><a href="#cb8-33" tabindex="-1"></a>                <span class="fl">0.268</span>                 <span class="sc">-</span><span class="fl">0.212</span>                 <span class="sc">-</span><span class="fl">0.496</span>  </span>
 <span id="cb8-34"><a href="#cb8-34" tabindex="-1"></a>       cor<span class="sc">:</span>om.eta.v,tv  cor<span class="sc">:</span>om.eta.cl,prop.cp   cor<span class="sc">:</span>om.eta.v,prop.cp </span>
-<span id="cb8-35"><a href="#cb8-35" tabindex="-1"></a>                <span class="fl">0.557</span>                  <span class="fl">0.134</span>                 <span class="sc">-</span><span class="fl">0.258</span>  </span>
+<span id="cb8-35"><a href="#cb8-35" tabindex="-1"></a>                <span class="fl">0.561</span>                  <span class="fl">0.140</span>                 <span class="sc">-</span><span class="fl">0.261</span>  </span>
 <span id="cb8-36"><a href="#cb8-36" tabindex="-1"></a>cor<span class="sc">:</span>om.eta.v,om.eta.cl </span>
-<span id="cb8-37"><a href="#cb8-37" tabindex="-1"></a>               <span class="sc">-</span><span class="fl">0.345</span>  </span>
+<span id="cb8-37"><a href="#cb8-37" tabindex="-1"></a>               <span class="sc">-</span><span class="fl">0.349</span>  </span>
 <span id="cb8-38"><a href="#cb8-38" tabindex="-1"></a> </span>
 <span id="cb8-39"><a href="#cb8-39" tabindex="-1"></a></span>
 <span id="cb8-40"><a href="#cb8-40" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
@@ -340,17 +351,18 @@ small.</p>
 <span id="cb8-42"><a href="#cb8-42" tabindex="-1"></a>    or <span class="fu">correlation</span> (fit_wrong<span class="sc">$</span>omegaR; <span class="at">diagonals=</span>SDs)</span>
 <span id="cb8-43"><a href="#cb8-43" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> <span class="sc">$</span>shrink </span>
 <span id="cb8-44"><a href="#cb8-44" tabindex="-1"></a>  Information about run <span class="fu">found</span> (fit_wrong<span class="sc">$</span>runInfo)<span class="sc">:</span></span>
-<span id="cb8-45"><a href="#cb8-45" tabindex="-1"></a>   • covMethod <span class="ot">=</span> <span class="st">"r,s"</span><span class="sc">:</span> the Hessian is ill<span class="sc">-</span><span class="fu">conditioned</span> (rcond <span class="fl">2.4e-06</span>, cond <span class="fl">4.23e+05</span>), and the sandwich inverts it twice where <span class="st">"r"</span> inverts it once <span class="sc">--</span> so the correction is amplified quadratically <span class="cf">in</span> the weakly<span class="sc">-</span>identified direction, which loads mainly on <span class="st">`</span><span class="at">prop.cp</span><span class="st">`</span>. Check that parameter<span class="st">'s relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. </span></span>
-<span id="cb8-46"><a href="#cb8-46" tabindex="-1"></a><span class="st">   • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. </span></span>
-<span id="cb8-47"><a href="#cb8-47" tabindex="-1"></a><span class="st">  Censoring (fit_wrong$censInformation): No censoring</span></span>
-<span id="cb8-48"><a href="#cb8-48" tabindex="-1"></a><span class="st">  Minimization message (fit_wrong$message):  </span></span>
-<span id="cb8-49"><a href="#cb8-49" tabindex="-1"></a><span class="st">    NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. </span></span></code></pre></div>
+<span id="cb8-45"><a href="#cb8-45" tabindex="-1"></a>   • <span class="st">"r,s"</span> covariance is conditional on the ETAs; <span class="fu">setCov</span>() is marginal </span>
+<span id="cb8-46"><a href="#cb8-46" tabindex="-1"></a>   • covMethod <span class="ot">=</span> <span class="st">"r,s"</span><span class="sc">:</span> the Hessian is ill<span class="sc">-</span><span class="fu">conditioned</span> (rcond <span class="fl">2.4e-06</span>, cond <span class="fl">4.17e+05</span>), and the sandwich inverts it twice where <span class="st">"r"</span> inverts it once <span class="sc">--</span> so the correction is amplified quadratically <span class="cf">in</span> the weakly<span class="sc">-</span>identified direction, which loads mainly on <span class="st">`</span><span class="at">prop.cp</span><span class="st">`</span>. Check that parameter<span class="st">'s relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. </span></span>
+<span id="cb8-47"><a href="#cb8-47" tabindex="-1"></a><span class="st">   • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. </span></span>
+<span id="cb8-48"><a href="#cb8-48" tabindex="-1"></a><span class="st">  Censoring (fit_wrong$censInformation): No censoring</span></span>
+<span id="cb8-49"><a href="#cb8-49" tabindex="-1"></a><span class="st">  Minimization message (fit_wrong$message):  </span></span>
+<span id="cb8-50"><a href="#cb8-50" tabindex="-1"></a><span class="st">    NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. </span></span></code></pre></div>
 <p>Clearance and volume are unchanged to three figures. The
 between-subject variability is not:</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">fit</span><span class="op">$</span><span class="va">omega</span><span class="op">)</span> <span class="op">/</span> <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">fit_wrong</span><span class="op">$</span><span class="va">omega</span><span class="op">)</span>, <span class="fl">1</span><span class="op">)</span></span>
 <span><span class="co">#&gt; eta.cl  eta.v </span></span>
-<span><span class="co">#&gt;   36.8   44.1</span></span></code></pre></div>
+<span><span class="co">#&gt;   36.7   44.6</span></span></code></pre></div>
 <p><code>Omega</code> shrinks by more than an order of magnitude on both
 random effects: the model is being asked to reproduce a between-subject
 spread <code>n</code> times tighter than the real one.
@@ -365,7 +377,7 @@ short of the full factor of <code>n</code>.</p>
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>RSE_CL_correct <span class="op">=</span> <span class="va">fit</span><span class="op">$</span><span class="va">parFixedDf</span><span class="op">[</span><span class="st">"tcl"</span>, <span class="st">"%RSE"</span><span class="op">]</span>,</span>
 <span>        RSE_CL_wrong   <span class="op">=</span> <span class="va">fit_wrong</span><span class="op">$</span><span class="va">parFixedDf</span><span class="op">[</span><span class="st">"tcl"</span>, <span class="st">"%RSE"</span><span class="op">]</span><span class="op">)</span>, <span class="fl">3</span><span class="op">)</span></span>
 <span><span class="co">#&gt; RSE_CL_correct   RSE_CL_wrong </span></span>
-<span><span class="co">#&gt;          2.162          0.364</span></span></code></pre></div>
+<span><span class="co">#&gt;          2.146          0.362</span></span></code></pre></div>
 <p>Clearance comes back not just right but implausibly certain — its
 standard error tightens about 5.9-fold, of order <code>sqrt(n)</code>.
 An RSE that looks too good for digitised literature data, or an IIV that
@@ -395,23 +407,24 @@ entries. A diagonal <code>V</code> selects <code>method = "var"</code>
 and skips the Cholesky solve — the honest default for literature data.
 The full-covariance path needs the subject-level matrix and
 <code>cov.wt(dv_mat, method = "ML")$cov</code>; see <a href="admixr2.html">Getting started</a>.</p>
-<p>Note the denominator, and declare it. admixr2’s likelihood is the
-exact one for <code>n</code> iid draws only under the ML
-(<code>n</code>) covariance, while a published SD is the unbiased
-(<code>n - 1</code>) one – so <code>V = SD^2</code> off a figure is on
-the <code>n - 1</code> scale and strictly wants
-<code>V = SD^2 * (n - 1) / n</code>.</p>
-<p>Rather than apply that by hand, say which convention the number is
-on:</p>
+<p>Note the denominator. admixr2’s likelihood is the exact one for
+<code>n</code> iid draws only under the ML (<code>n</code>) covariance,
+while a published SD is the unbiased (<code>n - 1</code>) one – so
+<code>V = SD^2</code> off a figure is on the <code>n - 1</code> scale
+and strictly wants <code>V = SD^2 * (n - 1) / n</code>.</p>
+<p><code><a href="../reference/admStudy.html">admStudy()</a></code> applies that for you, reading the currency
+you wrote the study in: an <code>sd</code> or <code>sem</code> is taken
+as a published, <code>n - 1</code> spread, and a <code>V</code> as a
+matrix you computed yourself, on the ML scale. Printing the study shows
+which it chose. Only a source that breaks that pattern needs saying
+so:</p>
 <div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E</span>, V <span class="op">=</span> <span class="va">SD</span><span class="op">^</span><span class="fl">2</span>, n <span class="op">=</span> <span class="va">n</span>, times <span class="op">=</span> <span class="va">times</span>,</span>
-<span>     ev      <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">50</span>, cmt <span class="op">=</span> <span class="st">"central"</span><span class="op">)</span>,</span>
-<span>     v_denom <span class="op">=</span> <span class="st">"unbiased"</span><span class="op">)</span>   <span class="co"># a published SD; admixr2 converts it</span></span></code></pre></div>
-<p><code>v_denom</code> defaults to <code>"ml"</code> — what
-<code>cov.wt(method = "ML")</code> and <a href="datagen.html"><code>datagen()</code></a> produce — so nothing
-changes for data you computed yourself. It is <strong>per
-study</strong>, because a meta-analysis routinely mixes a digitised
-figure with a model-derived source and the two need not agree.</p>
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/admStudy.html">admStudy</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E</span>, sd <span class="op">=</span> <span class="va">sd_ml</span>, n <span class="op">=</span> <span class="va">n</span>, times <span class="op">=</span> <span class="va">times</span>,   <span class="co"># an SD you computed with /n</span></span>
+<span>         ev <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">50</span>, cmt <span class="op">=</span> <span class="st">"central"</span><span class="op">)</span>,</span>
+<span>         v_denom <span class="op">=</span> <span class="st">"ml"</span><span class="op">)</span></span></code></pre></div>
+<p>The choice is <strong>per study</strong>, because a meta-analysis
+routinely mixes a digitised figure with a model-derived source and the
+two need not agree.</p>
 <p>At <code>n = 60</code> the factor is 1.7%. It grows as <code>n</code>
 falls, and it stops being cosmetic for any method that scores the
 reported covariance against its own sampling law rather than treating it
@@ -461,9 +474,9 @@ deliberately wrong in each direction:</p>
 <div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">assume</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">mult</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="va">f</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span><span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"adgh"</span>,</span>
-<span>               control <span class="op">=</span> <span class="fu"><a href="../reference/adghControl.html">adghControl</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
-<span>                 mg50 <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E</span>, V <span class="op">=</span> <span class="op">(</span><span class="va">SD</span> <span class="op">*</span> <span class="va">mult</span><span class="op">)</span><span class="op">^</span><span class="fl">2</span>, n <span class="op">=</span> <span class="va">n</span>, times <span class="op">=</span> <span class="va">times</span>,</span>
-<span>                             ev <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">50</span>, cmt <span class="op">=</span> <span class="st">"central"</span><span class="op">)</span><span class="op">)</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
+<span>               control <span class="op">=</span> <span class="fu"><a href="../reference/adghControl.html">adghControl</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="fu"><a href="../reference/admStudies.html">admStudies</a></span><span class="op">(</span></span>
+<span>                 mg50 <span class="op">=</span> <span class="fu"><a href="../reference/admStudy.html">admStudy</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E</span>, sd <span class="op">=</span> <span class="va">SD</span> <span class="op">*</span> <span class="va">mult</span>, n <span class="op">=</span> <span class="va">n</span>, times <span class="op">=</span> <span class="va">times</span>,</span>
+<span>                                 ev <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">50</span>, cmt <span class="op">=</span> <span class="st">"central"</span><span class="op">)</span><span class="op">)</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
 <span>  <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">f</span><span class="op">$</span><span class="va">theta</span><span class="op">[[</span><span class="st">"tcl"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span>, <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">f</span><span class="op">$</span><span class="va">theta</span><span class="op">[[</span><span class="st">"tv"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span>,</span>
 <span>    <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">f</span><span class="op">$</span><span class="va">omega</span><span class="op">)</span><span class="op">[[</span><span class="st">"eta.cl"</span><span class="op">]</span><span class="op">]</span>, <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">f</span><span class="op">$</span><span class="va">omega</span><span class="op">)</span><span class="op">[[</span><span class="st">"eta.v"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span></span>
 <span><span class="op">}</span></span>
@@ -498,26 +511,26 @@ var(eta.cl) = 0.09, var(eta.v) = 0.04.</caption>
 <td align="left">0.5x (too small)</td>
 <td align="right">4.74</td>
 <td align="right">49.89</td>
-<td align="right">0.017</td>
+<td align="right">0.016</td>
 <td align="right">0.010</td>
 </tr>
 <tr class="even">
 <td align="left">1x (correct)</td>
 <td align="right">4.74</td>
 <td align="right">49.96</td>
-<td align="right">0.064</td>
+<td align="right">0.063</td>
 <td align="right">0.038</td>
 </tr>
 <tr class="odd">
 <td align="left">2x (too large)</td>
 <td align="right">4.77</td>
-<td align="right">49.86</td>
-<td align="right">0.245</td>
-<td align="right">0.103</td>
+<td align="right">49.87</td>
+<td align="right">0.242</td>
+<td align="right">0.102</td>
 </tr>
 <tr class="even">
 <td align="left">4x (too large)</td>
-<td align="right">2.01</td>
+<td align="right">2.02</td>
 <td align="right">1.02</td>
 <td align="right">0.001</td>
 <td align="right">5.937</td>

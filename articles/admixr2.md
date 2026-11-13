@@ -17,9 +17,12 @@ For each study you supply:
 - **times** — observation time points
 - **ev** — dosing event table
 
-The estimators match E and V against their model-predicted counterparts
-and return a standard nlmixr2 fit object. Turning a published figure
-into `E`, `V` and `n` is covered in
+Each study is written down with
+[`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md),
+which checks it as it is built and prints it so it can be read back
+against the source. The estimators match E and V against their
+model-predicted counterparts and return a standard nlmixr2 fit object.
+Turning a published figure into `E`, `V` and `n` is covered in
 [`vignette("aggregate-data")`](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md);
 letting a study carry its own published model instead, in
 [`vignette("datagen")`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md).
@@ -138,24 +141,31 @@ equations — see [Advanced
 usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html#mu-referencing-and-sensitivity-equations),
 which also covers parameters with no random effect.
 
-## Assembling the study specification
+## Writing down the study
 
-Bundle each study’s statistics into a named list:
+[`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+takes the statistics and checks them; printing it is the read-back:
 
 ``` r
-
-study <- list(
+study <- admStudy(
   E     = E,
-  V     = V,                       # full 9x9 covariance matrix
+  V     = V,          # full 9x9 covariance matrix (ML denominator, as computed)
   n     = n,
   times = times,
-  ev    = rxode2::et(amt = 100)    # single 100 mg oral dose
+  dose  = 100         # single 100 mg oral dose; `ev = rxode2::et(...)` for more
 )
+study
+admixr2 study 'study'  -- digitised DATA
+  design    n = 500, dose 100, 9 times (0.1 - 12)
+  V scale   ml denominator
+  reported  mean profile, full covariance
 ```
 
 ## Fitting
 
-Pass one or more named studies to
+Collect the studies with
+[`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
+and pass them to
 [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md):
 
 ``` r
@@ -163,7 +173,7 @@ Pass one or more named studies to
 fit <- nlmixr2(
   pk_model, admData(), est = "admc",
   control = admControl(
-    studies   = list(examplomycin = study),
+    studies   = admStudies(examplomycin = study),
     n_sim     = 5000L,
     cov_n_sim = 10000L,
     maxeval   = 300L,
@@ -184,7 +194,7 @@ admc -3690.262 -3668.262 -3597.732       1845.131
 ── Time (sec fit$time): ──
 
   optimize covariance other elapsed
-1   40.024     15.155     0  55.179
+1   27.752     11.815     0  39.567
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -248,6 +258,8 @@ cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
+  Information about run found (fit$runInfo):
+   • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
   Censoring (fit$censInformation): No censoring
   Minimization message (fit$message):  
     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 

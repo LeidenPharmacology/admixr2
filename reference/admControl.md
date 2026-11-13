@@ -507,9 +507,11 @@ fit <- nlmixr2(
 #> | 0070     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
 #> | 0080     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
 #> | 0083 ✓   | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
-#> | 12.5 sec |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 8.6 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, Sens-Hessian, sandwich, 12 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
+#>  
+#>  
 #>  
 #>  
 print(fit)
@@ -521,7 +523,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance other elapsed
-#> 1   12.533     15.542     0  28.075
+#> 1    8.629      9.714     0  18.343
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
@@ -578,6 +580,8 @@ print(fit)
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
+#>   Information about run found (fit$runInfo):
+#>    • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  
 #>     NLOPT_FAILURE: Generic failure code. 

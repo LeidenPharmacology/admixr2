@@ -11,7 +11,7 @@ be read back against the source before anything is fitted."><meta property="og:i
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.1</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.2</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -57,7 +57,7 @@ be read back against the source before anything is fitted."><meta property="og:i
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Write down a published study</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/study-api.R" class="external-link"><code>R/study-api.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.2/R/study-api.R" class="external-link"><code>R/study-api.R</code></a></small>
       <div class="d-none name"><code>admStudy.Rd</code></div>
     </div>
 
@@ -86,7 +86,10 @@ be read back against the source before anything is fitted.</p>
 <span>  strata_nodes <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  range <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  label <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  v_denom <span class="op">=</span> <span class="cn">NULL</span></span>
+<span>  v_denom <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  simulated <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  occasions <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  occasion_starts <span class="op">=</span> <span class="cn">NULL</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -121,12 +124,30 @@ when that is the cohort's data frame.</p></dd>
 
 
 <dt id="arg-dose">dose<a class="anchor" aria-label="anchor" href="#arg-dose"></a></dt>
-<dd><p>Dose amount, as shorthand for a single-dose <code>ev</code>.</p></dd>
+<dd><p>What each patient gets, in the <code><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">rxode2::et()</a></code> terms an nlmixr2
+dataset uses. One of:</p><ul><li><p>an amount, <code>dose = 200</code> (one bolus at time 0);</p></li>
+<li><p>an event table, <code>dose = rxode2::et(amt = 200, ii = 12, addl = 6, dur = 1)</code>;</p></li>
+<li><p>a function of covariates returning either of those — what you would
+write for one subject, with the covariates as its arguments:
+<code>dose = function(WT) 2 * WT</code> for 2 mg/kg, or
+<code>dose = function(WT) rxode2::et(amt = pmin(15 * WT, 2000), ii = 12, addl = 6, dur = 1)</code> for a capped mg/kg infusion every 12 h;</p></li>
+<li><p>a dosing table by covariate band, <code>dose = doseBands(CRCL, breaks = 30, amt = c(100, 200))</code> — see <code><a href="doseBands.html">doseBands()</a></code>.</p></li>
+</ul><p>A function or a table expands the study into one study per dose group,
+each with its own dose, so the pooled analysis model needs no dose rule.
+A function is evaluated at <code>strata_nodes</code> quadrature nodes (default 9) over
+the covariates it reads, each node a study with its share of <code>n</code>; a table
+splits the population exactly at its band edges, which nodes cannot do for
+a stepwise rule, so write a step as <code><a href="doseBands.html">doseBands()</a></code>, not as an <code><a href="https://rdrr.io/r/base/ifelse.html" class="external-link">ifelse()</a></code> in
+a function (a kink such as a cap, <code>pmin(15 * WT, 2000)</code>, is likewise only
+approximated unless <code>strata_nodes</code> is raised). Covariates correlated with the dosing ones are conditioned
+on each node or band. A <code>range</code> on a dosing covariate gives the enrolled
+span, and the groups are cut inside it. Both need a published or simulated
+<code>model</code>: a digitised pooled <code>E</code>/<code>V</code> cannot be split into per-dose profiles.</p></dd>
 
 
 <dt id="arg-ev">ev<a class="anchor" aria-label="anchor" href="#arg-ev"></a></dt>
-<dd><p>A dosing event table from <code><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">rxode2::et()</a></code>, for anything <code>dose</code>
-cannot express.</p></dd>
+<dd><p>An event table from <code><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">rxode2::et()</a></code>; the same as giving it as
+<code>dose</code>, kept for code written before <code>dose</code> took one.</p></dd>
 
 
 <dt id="arg-population">population<a class="anchor" aria-label="anchor" href="#arg-population"></a></dt>
@@ -209,6 +230,35 @@ denominator, say. A published <code>model</code> is always <code>"ml"</code>: it
 generated at that denominator, so <code>"unbiased"</code> is refused rather than
 applied to a <code>V</code> that is already right.</p></dd>
 
+
+<dt id="arg-simulated">simulated<a class="anchor" aria-label="anchor" href="#arg-simulated"></a></dt>
+<dd><p><code>FALSE</code> (default): <code>model</code> is a PUBLISHED model, a
+meta-analysis source with no standard errors. <code>TRUE</code>: <code>model</code> and <code>est</code> are
+the truth of a trial you are SIMULATING, which is scored as <code>n</code> sampled
+patients and gets standard errors. Needs a <code>model</code>.</p></dd>
+
+
+<dt id="arg-occasions">occasions<a class="anchor" aria-label="anchor" href="#arg-occasions"></a></dt>
+<dd><p>For a model with inter-occasion variability
+(<code>iov.cl ~ 0.1 | occ</code>): the occasion of each observation time, one value per
+element of <code>times</code>, as an <code>occ</code> data column would give it (e.g.
+<code>times = c(2, 6, 98, 102)</code>, <code>occasions = c(1, 1, 2, 2)</code>). The values are the
+levels given to <code>admData(occasions = )</code>; they must not go back to an earlier
+occasion. A new occasion starts at the one dose between the previous occasion's
+last observation and its own first (an <code><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et()</a></code> dose table), or at its first observation when there is none; with several doses in between give <code>occasion_starts</code>. A published <code>model</code> written with an IOV
+term (<code>iov.cl ~ 0.05 | occ</code>) needs this too, and is generated with one random
+effect per occasion. A <code>model</code> WITHOUT such a term may also be given
+<code>occasions</code>: it is generated as written, and the labels apply in the fitted
+model, so the study asserts that its population has no between-occasion
+variance (leave them out to let it inform only the total variance). Only <code>adgh</code>
+and <code>admc</code> fit IOV.</p></dd>
+
+
+<dt id="arg-occasion-starts">occasion_starts<a class="anchor" aria-label="anchor" href="#arg-occasion-starts"></a></dt>
+<dd><p>Optional, with <code>occasions</code>: the time each observed occasion
+after the first begins (the dose that opens it), one per such occasion.
+Required when several doses fall between two occasions' observations.</p></dd>
+
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
@@ -223,6 +273,12 @@ applied to a <code>V</code> that is already right.</p></dd>
 exact functions of that model's parameters, and <code>n</code> sets its RELATIVE WEIGHT
 against the other studies rather than its precision. No standard error is
 reported for a fit that includes one — see <code><a href="admStudies.html">admStudies()</a></code>.</p>
+<p><strong>Simulating a trial instead.</strong> With <code>simulated = TRUE</code> the same <code>model</code> and
+<code>est</code> describe a trial you are simulating — a worked example, a design
+evaluation, a recovery check — rather than a paper. It is generated the
+same way, but scored as <code>n</code> sampled patients, so the fit reports standard
+errors as it would for digitised data. The summary is the trial's EXPECTED
+one (population moments for <code>n</code> patients), not one random realisation of it.</p>
 <p>Nothing is solved here. The study is generated when it reaches the fit, so
 building one is cheap and a mistake surfaces on <code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code> rather than after a
 long run.</p>

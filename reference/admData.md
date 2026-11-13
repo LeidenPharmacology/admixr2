@@ -15,7 +15,7 @@ reason the multi-endpoint frame below uses a placeholder `DV`.
 ## Usage
 
 ``` r
-admData(outputs = NULL)
+admData(outputs = NULL, occasions = NULL)
 ```
 
 ## Arguments
@@ -33,6 +33,16 @@ admData(outputs = NULL)
   objective (each estimator overwrites it with its own aggregate -2LL).
   When `NULL` (default) the single-endpoint dummy frame is returned
   unchanged.
+
+- occasions:
+
+  Optional named number of occasion levels for an inter-occasion
+  variability term (`iov.cl ~ 0.1 | occ`), e.g. `c(occ = 3)`. Adds that
+  column with the levels `1:3`: nlmixr2est reads the levels of an
+  occasion variable from the data it is given, and an aggregate fit has
+  no per-record column. Which times belong to which occasion is given on
+  each study, with `admStudy(occasions = )`. Needs at least two levels.
+  Supported by `adgh` and `admc`.
 
 ## Value
 
@@ -52,4 +62,8 @@ admData(c("cp", "cCSF"))
 #> 1  1    0 NA 100    1   1 <NA>
 #> 2  1    1  1   0    0  NA   cp
 #> 3  1    2  1   0    0  NA cCSF
+admData(occasions = c(occ = 2))
+#>   ID TIME DV AMT EVID CMT occ
+#> 1  1    0 NA 100  101   1   1
+#> 2  1    1  1   0    0   2   2
 ```

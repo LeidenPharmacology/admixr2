@@ -162,7 +162,7 @@ adgh 1749.121 1769.121 1820.975      -874.5605
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    1.793      0.767     0    2.56 3.786
+elapsed    1.253      0.626     0   1.879 3.359
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -203,6 +203,7 @@ cor:add.dbp,prop.cp
   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
   Information about run found (fit$runInfo):
+   • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
    • covMethod = "r,s": the Hessian is ill-conditioned (rcond 4.4e-05, cond 2.27e+04), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `add.dbp`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
    • adghCalcCov: the full Hessian including omega was not positive definite or was numerically singular; reporting structural and sigma standard errors only. 
   Censoring (fit$censInformation): No censoring

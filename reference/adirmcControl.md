@@ -495,6 +495,8 @@ fit <- nlmixr2(
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |
 #> +-- Phase 1: Wide (+/-2.00) -------------------------------------------------------------------------------------------------------------------+
+#>  
+#>  
 #> | 0001     |  2275.01 |    4.164 |    2.486 |    31.23 |    8.951 |   0.7664 |   0.1942 |   0.2236 |    0.665 |   0.2905 |  0.02583 |   0.1075 |
 #> | 0002     | -1238.39 |    4.907 |    8.253 |    31.55 |    9.105 |   0.8141 |    0.191 |   0.1114 |     0.09 |  0.07618 |  0.05042 |   0.1619 |
 #> | 0003     | -1265.61 |    4.918 |    7.943 |    31.88 |    8.851 |   0.7975 |   0.1735 |    0.126 |  0.06732 |   0.1044 |  0.02434 |   0.1414 |
@@ -522,9 +524,11 @@ fit <- nlmixr2(
 #> | 0022     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |   0.1851 |   0.1192 |  0.07862 |  0.09211 | 0.007296 |   0.1291 |
 #> | 0023     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09212 | 0.007294 |   0.1292 |
 #> | 0024 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007294 |   0.1291 |
-#> | 2.8 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 2.0 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, MC NLL, Sens-Hessian, sandwich, 12 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
+#>  
+#>  
 #>  
 #>  
 print(fit)
@@ -536,7 +540,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance other elapsed
-#> 1    2.786     17.654     0   20.44
+#> 1    2.011     12.694     0  14.705
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
@@ -594,6 +598,7 @@ print(fit)
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
 #>   Information about run found (fit$runInfo):
+#>    • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
 #>    • covMethod = "r,s": the Hessian is ill-conditioned (rcond 1.0e-05, cond 9.57e+04), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `logchol_eta.q`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  

@@ -1,5 +1,200 @@
 # Changelog
 
+## admixr2 0.4.2
+
+### New features
+
+- **Inter-occasion variability (IOV) for `adgh` and `admc`.** Write it
+  as in nlmixr2, `iov.cl ~ 0.1 | occ`, and `nlmixr2est` does the rewrite
+  (one estimated magnitude plus a unit-variance random effect per
+  occasion) and restores your model on the fit, with the IOV variance
+  under `fit$omega$occ`. An aggregate study has no `occ` column, so the
+  occasion of each observation time is given on the study,
+  `admStudy(..., times = c(2, 6, 98, 102), occasions = c(1, 1, 2, 2))`,
+  and the number of occasions to nlmixr2 with
+  `admData(occasions = c(occ = 2))`. An occasion starts at the dose that
+  opens it: when several doses lie between two occasions’ samples, say
+  which with `occasion_starts =` (it is refused as ambiguous otherwise).
+  IOV is identified only from a full covariance matrix `V` across
+  occasions, as the two variances otherwise share one flat ridge. `adfo`
+  and `adirmc` refuse an IOV model. IOV needs nlmixr2est \>= 7.2.1.
+
+- **Fixed omega is now held, not refused**, as in nlmixr2: a fixed
+  random effect, or a whole fixed block, stays in the model and is left
+  out of the optimizer. A block mixing fixed and free entries is
+  refused, as in nlmixr2. (`nlmixr2est`’s IOV rewrite produces fixed
+  etas.)
+
+- **`admStudy(..., simulated = TRUE)` for simulated trials, with
+  standard errors.** A trial simulated from a model to stand in for data
+  (a worked example, a recovery check, a design question) is now written
+  like any other study. It is generated exactly as a published model is,
+  but scored as `n` sampled patients, so the fit reports standard
+  errors. Before this, the only public route was
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md),
+  which marks every study as a published model and so blanked the SEs of
+  the whole fit.
+
+- **[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+  accepts
+  [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)/[`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
+  objects** and returns the `E`/`V` they generate, so what a study
+  contributes can be inspected before fitting.
+  [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+  is now the documented way in for all three kinds of study (digitised
+  data, published models and simulated trials). The vignettes use it
+  throughout, and
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+  is kept for inspection and for what
+  [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+  does not yet express (several observed outputs, individual samples,
+  and the choice of moment method).
+
+- **Covariate-dependent dosing for published models.**
+  [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)’s
+  `dose` now takes the dosing rule a paper used, written the way an
+  nlmixr2 dataset writes dosing, so a source that dosed by a covariate
+  is transcribed as it was run rather than at one representative dose:
+
+  - an amount, `dose = 200`, or an event table,
+    `dose = rxode2::et(amt = 200, ii = 12, addl = 6, dur = 1)`;
+  - a function of the covariates it reads, returning an amount or an
+    [`et()`](https://nlmixr2.github.io/rxode2/reference/et.html):
+    `dose = function(WT) 2 * WT` for 2 mg/kg, or
+    `function(WT) rxode2::et(amt = pmin(15 * WT, 2000), ii = 12, addl = 6, dur = 1)`
+    for a capped mg/kg infusion. The covariates are cut into nodes, and
+    each node becomes a study with its own dose and its share of `n`;
+  - a dosing table by covariate band, with the new
+    [`doseBands()`](https://leidenpharmacology.github.io/admixr2/reference/doseBands.md):
+    `dose = doseBands(CRCL, breaks = 30, amt = c(100, 200))`, plus any
+    [`et()`](https://nlmixr2.github.io/rxode2/reference/et.html) timing
+    (`ii`, `addl`, `dur`, …) for every band. The source becomes one
+    study per band, split exactly at the band edges. A `range` on the
+    banded covariate gives the enrolled span, and the bands are cut
+    inside it.
+
+  Covariates correlated with the dosing ones are conditioned on each
+  node or band, so they shift with it. The analysis model needs no dose
+  rule, because each study carries its own dose. A dose that would be
+  negative or missing at any node is refused when the study is written.
+  Functions and tables need a model source, since a digitised pooled
+  profile cannot be split. `ev` still works, as another name for an
+  event-table `dose`.
+
+### Changes that can move an existing fit
+
+- **A `range` on a covariate that is stratified and correlated with
+  others now shifts those others too.** The truncated covariate used to
+  be conditioned on its truncated position rather than its place in the
+  full distribution, so correlated covariates barely moved within the
+  enrolled span. Studies without a `range`, or whose covariates are
+  uncorrelated, are unchanged.
+
+- **Stratifying a study that is already conditioned now keeps that
+  conditioning.** A second stratification used to start again from the
+  population as a whole, which removed the dependence between covariates
+  inside each stratum.
+
+### Bug fixes
+
+- **Observation times out of order fitted the wrong data, silently, on
+  all four estimators.**
+  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
+  returns predictions in time order, while `E` and `V` stayed in the
+  order given, so each mean was scored against another timepoint’s
+  prediction. `times = c(4, 1, 8, 2)` gave a clearance of 0.03 where the
+  same data in order gave 5.4, with nothing to say so. Plain,
+  long-format and `observations` studies and
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+  are now put in time order, as joint studies already were. Studies
+  given in time order are unaffected.
+
+- **A lognormal margin moved the centre the paper reported.**
+  [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)
+  read a `median` given with `sd`, `cv` or `range` as a mean, and a
+  `mean` given with `iqr` as a median, so `c(median = 92, sd = 30)` had
+  median 87.5 and `c(mean = 92, iqr = c(70, 115))` had mean 98.4. Both
+  now keep the reported value, which changes results for populations
+  written that way.
+
+- **A covariate margin that describes no distribution is refused where
+  it is written**, not at the fit: a zero, negative or non-finite
+  spread, a non-finite centre, and `probs` that do not match `values`. A
+  negative `sd` on a lognormal margin used to be read as positive. A
+  named `cor` or `Sigma` matrix missing a covariate is refused too,
+  where it used to be applied by position and so could correlate the
+  wrong pair; a matrix with only row or only column names counts as
+  named.
+
+- **[`summary()`](https://rdrr.io/r/base/summary.html) on a fit failed**
+  with “wrong arguments for subsetting an environment”. It now shows the
+  fit, as [`print()`](https://rdrr.io/r/base/print.html) does.
+
+- **`NA` in `E` or `times` is refused.** adfo returned an objective of
+  `Inf` at the starting values with no error, and the others failed with
+  unrelated messages.
+  [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+  also refuses a `dose` that is not one non-negative number.
+  [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)
+  accepts a centred `median = 0` with an `iqr`, which used to crash.
+
+- **A dose into a compartment the model does not have is refused**, by
+  fits and by
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md).
+  rxode2 drops it without a word, so every prediction was 0: the fit
+  returned the starting values and
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+  generated zeros. An `ev` that is not from
+  [`rxode2::et()`](https://nlmixr2.github.io/rxode2/reference/et.html)
+  is refused too; a plain data frame lost its observation times and
+  failed with “subscript out of bounds”.
+
+- **Every fit reset the session’s random number stream**, because the
+  estimators seed themselves and never restored the caller’s state. A
+  loop drawing random numbers between fits got identical draws on every
+  iteration after the first, with no error, so a simulation study
+  written that way silently reused the same data. Fits,
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md),
+  [`plot()`](https://rdrr.io/r/graphics/plot.default.html) and
+  [`admMoments()`](https://leidenpharmacology.github.io/admixr2/reference/admMoments.md)
+  now leave the stream as they found it. Their own results are
+  unchanged, but code that draws random numbers after a fit now gets
+  different numbers than before.
+
+- **Slips in a transcribed covariate table passed silently.**
+  `covDist(WT = c(min = 50, max = 110))` became a binary covariate,
+  because anything unrecognised was read as level proportions and
+  rescaled. A range is now refused, and proportions or percentages that
+  do not sum to about 1 or 100 warn. A `cv` below 1 warns, since it is a
+  percent, and a median outside its own IQR is refused.
+
+- **Importance weights with a non-finite log-weight depended on the
+  Eigen version and on the element’s position**, because Eigen 3.4’s
+  vectorised `exp` returns about `5e-309` for `-Inf` rather than 0. A
+  single `+Inf` gave uniform weights, and on Eigen 5 all-zero weights,
+  which failed the test suite. Now `-Inf` gets weight 0 and `NaN`/`+Inf`
+  are clipped to the largest finite value on every Eigen. Weights from
+  finite log-weights are unchanged. Thanks to Dirk Eddelbuettel
+  ([\#158](https://github.com/LeidenPharmacology/admixr2/issues/158)).
+
+- **A joint study-level `V` kept its original row order when observation
+  times were given out of order**, so it no longer lined up with the
+  sorted means. It now follows the sorted times
+  ([\#137](https://github.com/LeidenPharmacology/admixr2/issues/137)).
+
+- **Bad study input that used to pass silently is now an error**: a
+  missing, non-finite or non-positive `n`; a non-finite or negative
+  variance; a `V` that is not symmetric positive-semidefinite; a missing
+  long-format endpoint; and an empty, unnamed or duplicated covariate in
+  [`covDist()`](https://leidenpharmacology.github.io/admixr2/reference/covDist.md)
+  ([\#137](https://github.com/LeidenPharmacology/admixr2/issues/137)).
+
+- **BIC truncated fractional study sizes**, which can make a stratum
+  count as zero observations. Lognormal moment matching in
+  [`covDist()`](https://leidenpharmacology.github.io/admixr2/reference/covDist.md)
+  no longer overflows at extreme scales
+  ([\#137](https://github.com/LeidenPharmacology/admixr2/issues/137)).
+
 ## admixr2 0.4.1
 
 CRAN release: 2026-09-16

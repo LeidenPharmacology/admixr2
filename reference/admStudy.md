@@ -25,7 +25,10 @@ admStudy(
   strata_nodes = NULL,
   range = NULL,
   label = NULL,
-  v_denom = NULL
+  v_denom = NULL,
+  simulated = FALSE,
+  occasions = NULL,
+  occasion_starts = NULL
 )
 ```
 
@@ -61,13 +64,46 @@ admStudy(
 
 - dose:
 
-  Dose amount, as shorthand for a single-dose `ev`.
+  What each patient gets, in the
+  [`rxode2::et()`](https://nlmixr2.github.io/rxode2/reference/et.html)
+  terms an nlmixr2 dataset uses. One of:
+
+  - an amount, `dose = 200` (one bolus at time 0);
+
+  - an event table,
+    `dose = rxode2::et(amt = 200, ii = 12, addl = 6, dur = 1)`;
+
+  - a function of covariates returning either of those — what you would
+    write for one subject, with the covariates as its arguments:
+    `dose = function(WT) 2 * WT` for 2 mg/kg, or
+    `dose = function(WT) rxode2::et(amt = pmin(15 * WT, 2000), ii = 12, addl = 6, dur = 1)`
+    for a capped mg/kg infusion every 12 h;
+
+  - a dosing table by covariate band,
+    `dose = doseBands(CRCL, breaks = 30, amt = c(100, 200))` — see
+    [`doseBands()`](https://leidenpharmacology.github.io/admixr2/reference/doseBands.md).
+
+  A function or a table expands the study into one study per dose group,
+  each with its own dose, so the pooled analysis model needs no dose
+  rule. A function is evaluated at `strata_nodes` quadrature nodes
+  (default 9) over the covariates it reads, each node a study with its
+  share of `n`; a table splits the population exactly at its band edges,
+  which nodes cannot do for a stepwise rule, so write a step as
+  [`doseBands()`](https://leidenpharmacology.github.io/admixr2/reference/doseBands.md),
+  not as an [`ifelse()`](https://rdrr.io/r/base/ifelse.html) in a
+  function (a kink such as a cap, `pmin(15 * WT, 2000)`, is likewise
+  only approximated unless `strata_nodes` is raised). Covariates
+  correlated with the dosing ones are conditioned on each node or band.
+  A `range` on a dosing covariate gives the enrolled span, and the
+  groups are cut inside it. Both need a published or simulated `model`:
+  a digitised pooled `E`/`V` cannot be split into per-dose profiles.
 
 - ev:
 
-  A dosing event table from
-  [`rxode2::et()`](https://nlmixr2.github.io/rxode2/reference/et.html),
-  for anything `dose` cannot express.
+  An event table from
+  [`rxode2::et()`](https://nlmixr2.github.io/rxode2/reference/et.html);
+  the same as giving it as `dose`, kept for code written before `dose`
+  took one.
 
 - population:
 
@@ -155,6 +191,38 @@ admStudy(
   moments are generated at that denominator, so `"unbiased"` is refused
   rather than applied to a `V` that is already right.
 
+- simulated:
+
+  `FALSE` (default): `model` is a PUBLISHED model, a meta-analysis
+  source with no standard errors. `TRUE`: `model` and `est` are the
+  truth of a trial you are SIMULATING, which is scored as `n` sampled
+  patients and gets standard errors. Needs a `model`.
+
+- occasions:
+
+  For a model with inter-occasion variability (`iov.cl ~ 0.1 | occ`):
+  the occasion of each observation time, one value per element of
+  `times`, as an `occ` data column would give it (e.g.
+  `times = c(2, 6, 98, 102)`, `occasions = c(1, 1, 2, 2)`). The values
+  are the levels given to `admData(occasions = )`; they must not go back
+  to an earlier occasion. A new occasion starts at the one dose between
+  the previous occasion's last observation and its own first (an
+  [`et()`](https://nlmixr2.github.io/rxode2/reference/et.html) dose
+  table), or at its first observation when there is none; with several
+  doses in between give `occasion_starts`. A published `model` written
+  with an IOV term (`iov.cl ~ 0.05 | occ`) needs this too, and is
+  generated with one random effect per occasion. A `model` WITHOUT such
+  a term may also be given `occasions`: it is generated as written, and
+  the labels apply in the fitted model, so the study asserts that its
+  population has no between-occasion variance (leave them out to let it
+  inform only the total variance). Only `adgh` and `admc` fit IOV.
+
+- occasion_starts:
+
+  Optional, with `occasions`: the time each observed occasion after the
+  first begins (the dose that opens it), one per such occasion. Required
+  when several doses fall between two occasions' observations.
+
 ## Value
 
 An `admStudy` object.
@@ -173,6 +241,14 @@ are exact functions of that model's parameters, and `n` sets its
 RELATIVE WEIGHT against the other studies rather than its precision. No
 standard error is reported for a fit that includes one — see
 [`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md).
+
+**Simulating a trial instead.** With `simulated = TRUE` the same `model`
+and `est` describe a trial you are simulating — a worked example, a
+design evaluation, a recovery check — rather than a paper. It is
+generated the same way, but scored as `n` sampled patients, so the fit
+reports standard errors as it would for digitised data. The summary is
+the trial's EXPECTED one (population moments for `n` patients), not one
+random realisation of it.
 
 Nothing is solved here. The study is generated when it reaches the fit,
 so building one is cheap and a mistake surfaces on
