@@ -2,9 +2,6 @@
 
 ## New features
 
-* The shipped vignette links to the other articles on the package website rather than to files
-  that are not in the package (CRAN incoming flagged them as invalid file URIs).
-
 * **Inter-occasion variability (IOV) for `adgh` and `admc`.** Write it as in nlmixr2,
   `iov.cl ~ 0.1 | occ`, and `nlmixr2est` does the rewrite (one estimated magnitude
   plus a unit-variance random effect per occasion) and restores your model on the
@@ -75,6 +72,9 @@
   inside each stratum.
 
 ## Bug fixes
+
+* The shipped vignette links to the other articles on the package website rather than to files
+  that are not in the package (CRAN incoming flagged them as invalid file URIs).
 
 * **Observation times out of order fitted the wrong data, silently, on all four
   estimators.** `rxSolve()` returns predictions in time order, while `E` and `V`
