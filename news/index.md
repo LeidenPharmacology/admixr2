@@ -97,6 +97,10 @@
 
 ### Bug fixes
 
+- The shipped vignette links to the other articles on the package
+  website rather than to files that are not in the package (CRAN
+  incoming flagged them as invalid file URIs).
+
 - **Observation times out of order fitted the wrong data, silently, on
   all four estimators.**
   [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)

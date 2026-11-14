@@ -194,7 +194,7 @@ admc -3690.262 -3668.262 -3597.732       1845.131
 ── Time (sec fit$time): ──
 
   optimize covariance other elapsed
-1   27.752     11.815     0  39.567
+1   47.176     18.174     0   65.35
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -330,17 +330,17 @@ All four panel types and their customisation are covered in
 ## Where to next
 
 - [From a published figure to E, V and
-  n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md)
+  n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.html)
   — turn published summaries into `E`, `V` and `n`
 - [Simulating data & using published
-  models](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)
+  models](https://leidenpharmacology.github.io/admixr2/articles/datagen.html)
   — the model-as-input path
 - [Multiple
-  studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)
+  studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.html)
   — meta-analysis across several studies
 - [Estimator
-  comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
+  comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html)
   — choosing a backend
 - [Choosing a residual error
-  model](https://leidenpharmacology.github.io/admixr2/articles/error-models.md)
+  model](https://leidenpharmacology.github.io/admixr2/articles/error-models.html)
   — what `cp ~ prop(...)` does to `E` and `V`

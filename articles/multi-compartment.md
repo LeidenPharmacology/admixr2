@@ -79,7 +79,7 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.497      0.255     0   0.752 3.683
+elapsed    0.754      0.328     0   1.082 4.746
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
@@ -207,7 +207,7 @@ adgh -88.64046 -72.64046 -36.70254       44.32023
 ── Time (sec fit_cns$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.565      0.265     0    0.83 3.207
+elapsed    1.114      0.435     0   1.549 3.773
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
