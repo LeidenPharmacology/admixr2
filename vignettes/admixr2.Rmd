@@ -51,9 +51,9 @@ Four estimators are available:
 | Gauss-Hermite | `"adgh"` | `adghControl()` | Deterministic quadrature over η; noise-free, unbiased at any IIV |
 | Iterative Reweighting MC | `"adirmc"` | `adirmcControl()` | Proposals fixed per phase; inner loop needs no new rxSolve calls |
 
-Start with `adfo` for screening and initial estimates. `admc` is the workhorse
-for standard PK models; `adgh` is its noise-free alternative, most efficient when
-there are few random effects; `adirmc` suits expensive ODE solves,
+Start with `adfo` for screening and initial estimates. `adgh` is deterministic and
+most efficient with few random effects, so it is used for the fit below; `admc` is
+the workhorse for standard PK models; `adirmc` suits expensive ODE solves,
 high-dimensional IIV or poor starting values. See
 `vignette("estimator-comparison")`.
 

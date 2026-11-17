@@ -83,7 +83,7 @@ coloured with the Okabe-Ito palette.
 \section{Why the covariate panels are separate}{
 
 With aggregate data a covariate effect is identified BETWEEN studies: the
-renal exponent in the covariates article on the package website is recovered from three cohorts
+renal exponent in the covariates article (\url{https://leidenpharmacology.github.io/admixr2/articles/covariates.html}) is recovered from three cohorts
 sitting at three different creatinine-clearance medians, none of which fitted
 a renal term at all. The \code{"mean"} and \code{"cov"} panels are per study and in
 isolation, so every source can sit beautifully on its own panel while the
