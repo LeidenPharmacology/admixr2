@@ -382,7 +382,8 @@ fit <- nlmixr2(
     studies  = list(study1 = list(E = E, V = V, n = length(ids),
                                   times = times, ev = et(amt = 100))),
     n_sim    = 1000L,
-    maxeval  = 200L
+    maxeval  = 200L,
+    covMethod = "none"     # skip the covariance step: keeps the example quick
   )
 )
 print(fit)

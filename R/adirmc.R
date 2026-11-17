@@ -110,7 +110,8 @@
 #'   control = adirmcControl(
 #'     studies = list(study1 = list(E = E, V = V, n = length(ids),
 #'                                  times = times, ev = et(amt = 100))),
-#'     n_sim   = 500L
+#'     n_sim   = 500L,
+#'     covMethod = "none"      # skip the covariance step: keeps the example quick
 #'   )
 #' )
 #' print(fit)
