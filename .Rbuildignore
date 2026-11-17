@@ -32,3 +32,4 @@
 ^CRAN-SUBMISSION$
 ^\.git$
 ^\.covrignore$
+^vignettes$

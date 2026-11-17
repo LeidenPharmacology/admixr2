@@ -40,5 +40,5 @@
 #' round(E, 3)
 #'
 #' @source Generated from a two-compartment PK model using `rxode2::rxSolve()`.
-#'   See `vignette("admixr2")` for a full modelling example.
+#'   See <https://leidenpharmacology.github.io/admixr2/articles/admixr2.html> for a full modelling example.
 "examplomycin"

@@ -73,6 +73,9 @@
 
 ## Bug fixes
 
+* **The package no longer ships a vignette**; all articles live on the package website. R CMD check on Windows was
+  over CRAN's 10-minute limit, 213 s of it rebuilding the vignette.
+
 * The shipped vignette links to the other articles on the package website rather than to files
   that are not in the package (CRAN incoming flagged them as invalid file URIs).
 
