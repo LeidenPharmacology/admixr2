@@ -32,8 +32,7 @@ A data frame with 5000 rows and 6 columns:
 
 Generated from a two-compartment PK model using
 [`rxode2::rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html).
-See
-[`vignette("admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md)
+See <https://leidenpharmacology.github.io/admixr2/articles/admixr2.html>
 for a full modelling example.
 
 ## Details

@@ -36,10 +36,11 @@ Four estimators are available:
 | Gauss-Hermite | `"adgh"` | [`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md) | Deterministic quadrature over η; noise-free, unbiased at any IIV |
 | Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) | Proposals fixed per phase; inner loop needs no new rxSolve calls |
 
-Start with `adfo` for screening and initial estimates. `admc` is the
-workhorse for standard PK models; `adgh` is its noise-free alternative,
-most efficient when there are few random effects; `adirmc` suits
-expensive ODE solves, high-dimensional IIV or poor starting values. See
+Start with `adfo` for screening and initial estimates. `adgh` is
+deterministic and most efficient with few random effects, so it is used
+for the fit below; `admc` is the workhorse for standard PK models;
+`adirmc` suits expensive ODE solves, high-dimensional IIV or poor
+starting values. See
 [`vignette("estimator-comparison")`](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md).
 
 ## The examplomycin dataset
@@ -166,18 +167,18 @@ admixr2 study 'study'  -- digitised DATA
 Collect the studies with
 [`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
 and pass them to
-[`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md):
+[`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md).
+Gauss-Hermite quadrature is deterministic, so the same call always gives
+the same fit:
 
 ``` r
 
 fit <- nlmixr2(
-  pk_model, admData(), est = "admc",
-  control = admControl(
-    studies   = admStudies(examplomycin = study),
-    n_sim     = 5000L,
-    cov_n_sim = 10000L,
-    maxeval   = 300L,
-    seed      = 1L
+  pk_model, admData(), est = "adgh",
+  control = adghControl(
+    studies = admStudies(examplomycin = study),
+    maxeval = 300L,
+    cores   = 2L
   )
 )
 ```
@@ -186,73 +187,73 @@ fit <- nlmixr2(
 
 ``` r
 print(fit)
-── nlmixr² admc ──
+── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
-admc -3690.262 -3668.262 -3597.732       1845.131
+adgh -3690.048 -3668.048 -3597.518       1845.024
 
 ── Time (sec fit$time): ──
 
   optimize covariance other elapsed
-1   47.176     18.174     0   65.35
+1   10.471      5.618     0  16.089
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                                   Parameter    Est.       SE  %RSE
-tcl                    Log clearance (L/hr)   1.602  0.02000 1.248
-tv1                  Log central volume (L)   2.328   0.1320 5.670
-tv2               Log peripheral volume (L)   3.397  0.05338 1.571
-tq        Log inter-compartmental CL (L/hr)   2.276  0.02729 1.199
-tka     Log absorption rate constant (1/hr) 0.02979   0.1230 412.9
+tcl                    Log clearance (L/hr)   1.602  0.02017 1.259
+tv1                  Log central volume (L)   2.329   0.1364 5.858
+tv2               Log peripheral volume (L)   3.397  0.05492 1.617
+tq        Log inter-compartmental CL (L/hr)   2.276  0.02737 1.203
+tka     Log absorption rate constant (1/hr) 0.03030   0.1272 419.6
 prop.sd      Proportional residual error SD  0.1895 0.003282 1.732
         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl        4.963 (4.772, 5.161)    32.62         NaN
-tv1        10.26 (7.920, 13.29)    33.15         NaN
-tv2        29.89 (26.92, 33.18)    31.81         NaN
-tq         9.738 (9.231, 10.27)    33.68         NaN
-tka       1.030 (0.8096, 1.311)    31.87         NaN
+tcl        4.964 (4.771, 5.164)    32.53         NaN
+tv1        10.27 (7.858, 13.41)    32.91         NaN
+tv2        29.86 (26.81, 33.26)    31.53         NaN
+tq         9.739 (9.230, 10.28)    33.66         NaN
+tka       1.031 (0.8034, 1.323)    32.10         NaN
 prop.sd 0.1895 (0.1831, 0.1960)                     
  
   Covariance Type (fit$covMethod): r,s
   Some strong fixed parameter correlations exist (fit$cor) :
                 cor:tv1,tcl             cor:tv2,tcl              cor:tq,tcl 
-                 0.360                  -0.527                   0.210  
+                 0.382                  -0.540                   0.212  
             cor:tka,tcl         cor:prop.sd,tcl       cor:om.eta.cl,tcl 
-                 0.386                  0.0569                  -0.102  
+                 0.406                  0.0592                 -0.0974  
       cor:om.eta.v1,tcl       cor:om.eta.v2,tcl        cor:om.eta.q,tcl 
-                -0.333                  -0.191                   0.265  
+                -0.361                  -0.186                   0.275  
       cor:om.eta.ka,tcl             cor:tv2,tv1              cor:tq,tv1 
-                 0.316                  -0.851                   0.233  
+                 0.348                  -0.859                   0.236  
             cor:tka,tv1         cor:prop.sd,tv1       cor:om.eta.cl,tv1 
-                 0.982                 -0.0190                -0.00708  
+                 0.984                 -0.0139                -0.00635  
       cor:om.eta.v1,tv1       cor:om.eta.v2,tv1        cor:om.eta.q,tv1 
-                -0.672                  0.0598                   0.501  
+                -0.711                  0.0566                   0.507  
       cor:om.eta.ka,tv1              cor:tq,tv2             cor:tka,tv2 
-                 0.693                  -0.274                  -0.857  
+                 0.735                  -0.275                  -0.865  
         cor:prop.sd,tv2       cor:om.eta.cl,tv2       cor:om.eta.v1,tv2 
-              -0.00614                  0.0506                   0.625  
+               -0.0101                  0.0473                   0.663  
       cor:om.eta.v2,tv2        cor:om.eta.q,tv2       cor:om.eta.ka,tv2 
-                0.0749                  -0.439                  -0.642  
+                0.0739                  -0.448                  -0.682  
              cor:tka,tq          cor:prop.sd,tq        cor:om.eta.cl,tq 
-                 0.271                -0.00629                 -0.0495  
+                 0.272                -0.00667                 -0.0487  
        cor:om.eta.v1,tq        cor:om.eta.v2,tq         cor:om.eta.q,tq 
-                -0.138                  0.0734                   0.318  
+                -0.143                  0.0728                   0.324  
        cor:om.eta.ka,tq         cor:prop.sd,tka       cor:om.eta.cl,tka 
-                0.0656                 -0.0229                -0.00878  
+                0.0780                 -0.0180                -0.00788  
       cor:om.eta.v1,tka       cor:om.eta.v2,tka        cor:om.eta.q,tka 
-                -0.666                  0.0557                   0.527  
+                -0.705                  0.0530                   0.532  
       cor:om.eta.ka,tka   cor:om.eta.cl,prop.sd   cor:om.eta.v1,prop.sd 
-                 0.683                 -0.0292                 -0.0525  
+                 0.724                 -0.0278                 -0.0490  
   cor:om.eta.v2,prop.sd    cor:om.eta.q,prop.sd   cor:om.eta.ka,prop.sd 
-                -0.195                  -0.161                  0.0196  
+                -0.198                  -0.158                  0.0199  
 cor:om.eta.v1,om.eta.cl cor:om.eta.v2,om.eta.cl  cor:om.eta.q,om.eta.cl 
-                0.0363                  -0.158                -0.00687  
+                0.0367                  -0.169                -0.00235  
 cor:om.eta.ka,om.eta.cl cor:om.eta.v2,om.eta.v1  cor:om.eta.q,om.eta.v1 
-               -0.0317                 -0.0249                  -0.257  
+               -0.0326                 -0.0335                  -0.282  
 cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2 
-                -0.887                  -0.132                  0.0377  
+                -0.907                  -0.137                  0.0447  
  cor:om.eta.ka,om.eta.q 
-                 0.219  
+                 0.252  
  
 
   No correlations in between subject variability (BSV) matrix
@@ -262,7 +263,7 @@ cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2
    • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
   Censoring (fit$censInformation): No censoring
   Minimization message (fit$message):  
-    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+    NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. 
 ```
 
 Key entries in `fit$env$admExtra`:
@@ -270,18 +271,18 @@ Key entries in `fit$env$admExtra`:
 ``` r
 
 fit$objective                    # -2 log-likelihood
-#> [1] -3690.262
+#> [1] -3690.048
 fit$env$admExtra$struct          # structural parameters (log scale)
-#>        tcl        tv1        tv2         tq        tka 
-#> 1.60197115 2.32807483 3.39738144 2.27604233 0.02978847
+#>       tcl       tv1       tv2        tq       tka 
+#> 1.6021766 2.3289123 3.3965932 2.2761540 0.0303032
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
-#> 0.03592041
+#> 0.03592593
 
 logLik(fit)
-#> 'log Lik.' 1845.131 (df=11)
+#> 'log Lik.' 1845.024 (df=11)
 AIC(fit)
-#> [1] -3668.262
+#> [1] -3668.048
 ```
 
 The estimated between-subject covariance matrix `Omega`:
@@ -294,11 +295,11 @@ knitr::kable(fit$env$admExtra$omega, digits = 4,
 
 |        |        |        |        |        |
 |-------:|-------:|-------:|-------:|-------:|
-| 0.1011 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
-| 0.0000 | 0.1042 | 0.0000 | 0.0000 | 0.0000 |
-| 0.0000 | 0.0000 | 0.0964 | 0.0000 | 0.0000 |
-| 0.0000 | 0.0000 | 0.0000 | 0.1075 | 0.0000 |
-| 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0967 |
+| 0.1006 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| 0.0000 | 0.1028 | 0.0000 | 0.0000 | 0.0000 |
+| 0.0000 | 0.0000 | 0.0948 | 0.0000 | 0.0000 |
+| 0.0000 | 0.0000 | 0.0000 | 0.1074 | 0.0000 |
+| 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0981 |
 
 Estimated Omega (between-subject covariance). {.table}
 

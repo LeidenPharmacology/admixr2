@@ -470,7 +470,8 @@ fit <- nlmixr2(
   control = adirmcControl(
     studies = list(study1 = list(E = E, V = V, n = length(ids),
                                  times = times, ev = et(amt = 100))),
-    n_sim   = 500L
+    n_sim   = 500L,
+    covMethod = "none"      # skip the covariance step: keeps the example quick
   )
 )
 #>  
@@ -491,7 +492,7 @@ fit <- nlmixr2(
 #>  
 #>  
 #> === admixr2: Aggregate Data Modeling (IR-MC) ===
-#>   Studies: 1 | MC samples: 500 | Phases: 4 | Iters/phase: 50 | Expansion: 1.00 | Grad: analytic+Sens-Hessian | Restarts: 1
+#>   Studies: 1 | MC samples: 500 | Phases: 4 | Iters/phase: 50 | Expansion: 1.00 | Grad: analytic | Restarts: 1
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |
 #> +-- Phase 1: Wide (+/-2.00) -------------------------------------------------------------------------------------------------------------------+
@@ -506,26 +507,20 @@ fit <- nlmixr2(
 #> | 0007     | -1266.39 |    4.929 |    7.883 |    31.57 |    8.851 |   0.7949 |   0.1848 |   0.1203 |  0.07921 |  0.09387 | 0.007537 |   0.1296 |
 #> | 0008     | -1266.46 |    4.937 |    7.872 |    31.58 |    8.844 |    0.794 |   0.1851 |   0.1188 |  0.07817 |  0.09111 | 0.007357 |   0.1291 |
 #> | 0009     | -1266.48 |    4.933 |    7.871 |    31.59 |    8.844 |   0.7939 |   0.1849 |   0.1194 |  0.07861 |   0.0925 | 0.007237 |   0.1295 |
-#> | 0010     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.847 |   0.7943 |   0.1851 |   0.1191 |  0.07856 |  0.09187 | 0.007266 |    0.129 |
-#> | 0011     | -1266.48 |    4.933 |    7.875 |    31.58 |    8.847 |   0.7943 |    0.185 |   0.1193 |   0.0787 |  0.09228 | 0.007291 |   0.1292 |
-#> | 0012     | -1266.48 |    4.934 |    7.875 |    31.58 |    8.847 |   0.7943 |   0.1851 |   0.1192 |  0.07861 |  0.09204 | 0.007304 |   0.1291 |
-#> | 0013     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1193 |  0.07863 |  0.09215 | 0.007296 |   0.1292 |
-#> | 0014     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |   0.1851 |   0.1192 |  0.07861 |  0.09209 | 0.007297 |   0.1291 |
-#> | 0015     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09213 | 0.007296 |   0.1292 |
-#> | 0016     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07861 |  0.09211 | 0.007296 |   0.1291 |
-#> | 0017 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007293 |   0.1292 |
+#> | 0010     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |   0.1851 |   0.1191 |  0.07853 |  0.09184 | 0.007242 |    0.129 |
+#> | 0011     | -1266.48 |    4.933 |    7.875 |    31.58 |    8.847 |   0.7943 |    0.185 |   0.1193 |  0.07872 |   0.0923 | 0.007281 |   0.1291 |
+#> | 0012     | -1266.48 |    4.934 |    7.875 |    31.58 |    8.847 |   0.7943 |   0.1851 |   0.1192 |  0.07863 |  0.09205 | 0.007307 |   0.1291 |
+#> | 0013     | -1266.48 |    4.934 |    7.875 |    31.58 |    8.847 |   0.7943 |    0.185 |   0.1193 |  0.07864 |  0.09216 | 0.007306 |   0.1292 |
+#> | 0014     | -1266.48 |    4.934 |    7.875 |    31.58 |    8.847 |   0.7943 |   0.1851 |   0.1192 |  0.07861 |  0.09209 | 0.007307 |   0.1291 |
+#> | 0015     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07861 |  0.09212 | 0.007294 |   0.1292 |
+#> | 0016 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007294 |   0.1291 |
 #> +-- Phase 2: Focused (+/-1.00) ----------------------------------------------------------------------------------------------------------------+
-#> | 0018     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07861 |  0.09211 | 0.007296 |   0.1291 |
-#> | 0019 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007293 |   0.1292 |
+#> | 0017 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007294 |   0.1291 |
 #> +-- Phase 3: Fine-tuning (+/-0.50) ------------------------------------------------------------------------------------------------------------+
-#> | 0020     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07861 |  0.09211 | 0.007296 |   0.1291 |
-#> | 0021 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007293 |   0.1292 |
+#> | 0018 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007294 |   0.1291 |
 #> +-- Phase 4: Precision (+/-0.01) --------------------------------------------------------------------------------------------------------------+
-#> | 0022     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |   0.1851 |   0.1192 |  0.07862 |  0.09211 | 0.007296 |   0.1291 |
-#> | 0023     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09212 | 0.007294 |   0.1292 |
-#> | 0024 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007294 |   0.1291 |
-#> | 3.2 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
-#>   Computing covariance (R method, MC NLL, Sens-Hessian, sandwich, 12 gradient evaluations)
+#> | 0019 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007294 |   0.1291 |
+#> | 1.8 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  
@@ -539,67 +534,22 @@ print(fit)
 #> 
 #> ── Time (sec fit$time): ──
 #> 
-#>   optimize covariance other elapsed
-#> 1    3.237     18.139     0  21.376
+#>         optimize covariance other elapsed other
+#> elapsed    1.792          0     0   1.792 3.203
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
-#>            Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl       1.596 0.05289 3.314    4.934 (4.448, 5.473)    35.59         NaN
-#> tv1       2.064  0.4762 23.07    7.874 (3.097, 20.02)    28.60         NaN
-#> tv2       3.453  0.1869 5.412    31.58 (21.90, 45.55)    31.07         NaN
-#> tq        2.180  0.1536 7.045    8.846 (6.547, 11.95)    8.557         NaN
-#> tka     -0.2304  0.4307 186.9  0.7942 (0.3415, 1.847)    37.13         NaN
-#> prop.sd  0.1850 0.01205 6.514 0.1850 (0.1614, 0.2087)                     
+#>            Est. SE %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+#> tcl       1.596                           4.934    35.59         NaN
+#> tv1       2.064                           7.874    28.60         NaN
+#> tv2       3.453                           31.58    31.06         NaN
+#> tq        2.180                           8.846    8.556         NaN
+#> tka     -0.2304                          0.7942    37.13         NaN
+#> prop.sd  0.1850                          0.1850                     
 #>  
-#>   Covariance Type (fit$covMethod): r,s
-#>   Some strong fixed parameter correlations exist (fit$cor) :
-#>                 cor:tv1,tcl             cor:tv2,tcl              cor:tq,tcl 
-#>                  0.932                  -0.946                   0.933  
-#>             cor:tka,tcl         cor:prop.sd,tcl       cor:om.eta.cl,tcl 
-#>                  0.933                   0.737                  -0.750  
-#>       cor:om.eta.v1,tcl       cor:om.eta.v2,tcl        cor:om.eta.q,tcl 
-#>                 -0.563                   0.115                    0.919  
-#>       cor:om.eta.ka,tcl             cor:tv2,tv1              cor:tq,tv1 
-#>                  0.808                  -0.989                   0.992  
-#>             cor:tka,tv1         cor:prop.sd,tv1       cor:om.eta.cl,tv1 
-#>                  0.999                   0.782                  -0.740  
-#>       cor:om.eta.v1,tv1       cor:om.eta.v2,tv1        cor:om.eta.q,tv1 
-#>                 -0.623                   0.118                    0.982  
-#>       cor:om.eta.ka,tv1              cor:tq,tv2             cor:tka,tv2 
-#>                  0.871                  -0.985                  -0.989  
-#>         cor:prop.sd,tv2       cor:om.eta.cl,tv2       cor:om.eta.v1,tv2 
-#>                 -0.775                   0.764                   0.602  
-#>       cor:om.eta.v2,tv2        cor:om.eta.q,tv2       cor:om.eta.ka,tv2 
-#>                 -0.140                   -0.974                  -0.865  
-#>              cor:tka,tq          cor:prop.sd,tq        cor:om.eta.cl,tq 
-#>                  0.993                   0.782                  -0.741  
-#>        cor:om.eta.v1,tq        cor:om.eta.v2,tq         cor:om.eta.q,tq 
-#>                 -0.619                   0.173                    0.975  
-#>        cor:om.eta.ka,tq         cor:prop.sd,tka       cor:om.eta.cl,tka 
-#>                  0.851                   0.784                  -0.741  
-#>       cor:om.eta.v1,tka       cor:om.eta.v2,tka        cor:om.eta.q,tka 
-#>                 -0.622                   0.121                    0.981  
-#>       cor:om.eta.ka,tka   cor:om.eta.cl,prop.sd   cor:om.eta.v1,prop.sd 
-#>                  0.870                  -0.721                  -0.625  
-#>   cor:om.eta.v2,prop.sd    cor:om.eta.q,prop.sd   cor:om.eta.ka,prop.sd 
-#>                 0.0691                    0.841                   0.656  
-#> cor:om.eta.v1,om.eta.cl cor:om.eta.v2,om.eta.cl  cor:om.eta.q,om.eta.cl 
-#>                  0.499                  -0.172                   -0.747  
-#> cor:om.eta.ka,om.eta.cl cor:om.eta.v2,om.eta.v1  cor:om.eta.q,om.eta.v1 
-#>                 -0.657                  0.0185                   -0.669  
-#> cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2 
-#>                 -0.424                  0.0617                   0.0332   
-#>  cor:om.eta.ka,om.eta.q 
-#>                  0.843  
-#>  
-#> 
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
-#>   Information about run found (fit$runInfo):
-#>    • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
-#>    • covMethod = "r,s": the Hessian is ill-conditioned (rcond 1.0e-05, cond 9.57e+04), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `logchol_eta.q`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  
 #>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 

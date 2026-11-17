@@ -484,7 +484,8 @@ fit <- nlmixr2(
     studies  = list(study1 = list(E = E, V = V, n = length(ids),
                                   times = times, ev = et(amt = 100))),
     n_sim    = 1000L,
-    maxeval  = 200L
+    maxeval  = 200L,
+    covMethod = "none"     # skip the covariance step: keeps the example quick
   )
 )
 #>  
@@ -506,9 +507,9 @@ fit <- nlmixr2(
 #> | 0060     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
 #> | 0070     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
 #> | 0080     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
-#> | 0083 ✓   | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
-#> | 13.3 sec |          |          |          |          |          |          |          |          |          |          |          |          |
-#>   Computing covariance (R method, Sens-Hessian, sandwich, 12 gradient evaluations)
+#> | 0090     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
+#> | 0092 ✓   | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
+#> | 10.9 sec |          |          |          |          |          |          |          |          |          |          |          |          |
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  
@@ -523,65 +524,21 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance other elapsed
-#> 1   13.307      16.65     0  29.957
+#> 1   10.861          0     0  10.861
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
-#>            Est.       SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl       1.601  0.01976 1.234    4.957 (4.769, 5.153)    33.01         NaN
-#> tv1       2.329   0.1294 5.556    10.26 (7.964, 13.22)    34.42         NaN
-#> tv2       3.397  0.05201 1.531    29.88 (26.99, 33.09)    32.38         NaN
-#> tq        2.276  0.02769 1.217    9.736 (9.222, 10.28)    33.86         NaN
-#> tka     0.03217   0.1200 372.9   1.033 (0.8163, 1.306)    31.77         NaN
-#> prop.sd  0.1894 0.003291 1.737 0.1894 (0.1830, 0.1959)                     
+#>            Est. SE %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+#> tcl       1.601                           4.957    33.01         NaN
+#> tv1       2.329                           10.26    34.42         NaN
+#> tv2       3.397                           29.88    32.38         NaN
+#> tq        2.276                           9.736    33.86         NaN
+#> tka     0.03216                           1.033    31.77         NaN
+#> prop.sd  0.1894                          0.1894                     
 #>  
-#>   Covariance Type (fit$covMethod): r,s
-#>   Some strong fixed parameter correlations exist (fit$cor) :
-#>                 cor:tv1,tcl             cor:tv2,tcl              cor:tq,tcl 
-#>                  0.301                  -0.483                   0.206   
-#>             cor:tka,tcl         cor:prop.sd,tcl       cor:om.eta.cl,tcl 
-#>                  0.330                  0.0481                   -0.125   
-#>       cor:om.eta.v1,tcl       cor:om.eta.v2,tcl        cor:om.eta.q,tcl 
-#>                 -0.243                   -0.183                    0.253   
-#>       cor:om.eta.ka,tcl             cor:tv2,tv1              cor:tq,tv1 
-#>                  0.203                   -0.838                   0.217   
-#>             cor:tka,tv1         cor:prop.sd,tv1       cor:om.eta.cl,tv1 
-#>                  0.981                 -0.0353                 -0.00544   
-#>       cor:om.eta.v1,tv1       cor:om.eta.v2,tv1        cor:om.eta.q,tv1 
-#>                 -0.617                  0.0743                    0.510  
-#>       cor:om.eta.ka,tv1              cor:tq,tv2             cor:tka,tv2 
-#>                  0.629                  -0.269                   -0.846  
-#>         cor:prop.sd,tv2       cor:om.eta.cl,tv2       cor:om.eta.v1,tv2 
-#>                 0.0123                   0.0571                    0.543  
-#>       cor:om.eta.v2,tv2        cor:om.eta.q,tv2       cor:om.eta.ka,tv2 
-#>                 0.0582                   -0.450                  -0.556  
-#>              cor:tka,tq          cor:prop.sd,tq        cor:om.eta.cl,tq 
-#>                  0.257                 -0.00147                  -0.0496   
-#>        cor:om.eta.v1,tq        cor:om.eta.v2,tq         cor:om.eta.q,tq 
-#>                 -0.131                   0.0657                    0.326  
-#>        cor:om.eta.ka,tq         cor:prop.sd,tka       cor:om.eta.cl,tka 
-#>              0.0000123                  -0.0383                 -0.00740   
-#>       cor:om.eta.v1,tka       cor:om.eta.v2,tka        cor:om.eta.q,tka 
-#>                 -0.605                  0.0691                    0.537  
-#>       cor:om.eta.ka,tka   cor:om.eta.cl,prop.sd   cor:om.eta.v1,prop.sd 
-#>                  0.618                 -0.0349                  -0.0447   
-#>   cor:om.eta.v2,prop.sd    cor:om.eta.q,prop.sd   cor:om.eta.ka,prop.sd 
-#>                 -0.183                   -0.159                  -0.0172   
-#> cor:om.eta.v1,om.eta.cl cor:om.eta.v2,om.eta.cl  cor:om.eta.q,om.eta.cl 
-#>                 0.0270                   -0.136                  -0.0149   
-#> cor:om.eta.ka,om.eta.cl cor:om.eta.v2,om.eta.v1  cor:om.eta.q,om.eta.v1 
-#>                -0.0203                  -0.0181                   -0.266   
-#> cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2 
-#>                 -0.642                  -0.120                   0.0408   
-#>  cor:om.eta.ka,om.eta.q 
-#>                  0.191   
-#>  
-#> 
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
-#>   Information about run found (fit$runInfo):
-#>    • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  
 #>     NLOPT_FAILURE: Generic failure code. 

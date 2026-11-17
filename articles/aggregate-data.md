@@ -161,34 +161,34 @@ fit
 ── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
-adgh -1330.198 -1320.198 -1299.997       665.0992
+adgh -1330.197 -1320.197 -1299.996       665.0986
 
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.634      0.258     0   0.892 3.257
+elapsed    0.501      0.243     0   0.744 3.416
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                           Parameter    Est.      SE   %RSE
-tcl             Log clearance (L/h)   1.556 0.03339  2.146
-tv                   Log volume (L)   3.911 0.02632 0.6729
-prop.cp Proportional residual error 0.09518 0.05512  57.91
-           Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl           4.738 (4.438, 5.059)    25.59         NaN
-tv            49.96 (47.45, 52.61)    19.61         NaN
-prop.cp 0.09518 (-0.01284, 0.2032)                     
+tcl             Log clearance (L/h)   1.556 0.03333  2.142
+tv                   Log volume (L)   3.911 0.02620 0.6700
+prop.cp Proportional residual error 0.09685 0.05361  55.36
+            Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl            4.739 (4.439, 5.059)    25.54         NaN
+tv             49.96 (47.46, 52.59)    19.49         NaN
+prop.cp 0.09685 (-0.008226, 0.2019)                     
  
   Covariance Type (fit$covMethod): r,s
   Some strong fixed parameter correlations exist (fit$cor) :
                 cor:tv,tcl        cor:prop.cp,tcl      cor:om.eta.cl,tcl 
-               0.0147                -0.0751                 0.0512  
+               0.0153                -0.0764                 0.0519  
       cor:om.eta.v,tcl         cor:prop.cp,tv       cor:om.eta.cl,tv 
-               0.0467                 -0.138                 0.0847  
+               0.0481                 -0.138                 0.0836  
        cor:om.eta.v,tv  cor:om.eta.cl,prop.cp   cor:om.eta.v,prop.cp 
-                0.118                 -0.603                 -0.834  
+                0.118                 -0.594                 -0.834  
 cor:om.eta.v,om.eta.cl 
-                0.482  
+                0.473  
  
 
   No correlations in between subject variability (BSV) matrix
@@ -220,28 +220,28 @@ adgh -2948.24 -2938.24 -2918.039        1474.12
 
 ── Time (sec fit_wrong$time): ──
 
-        optimize covariance other elapsed other
-elapsed    0.687      0.165     0   0.852 0.077
+  optimize covariance other elapsed
+1    0.739      0.144     0   0.883
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
                           Parameter     Est.       SE   %RSE
-tcl             Log clearance (L/h)    1.558 0.005641 0.3621
-tv                   Log volume (L)    3.908 0.004554 0.1165
-prop.cp Proportional residual error 0.008208 0.003604  43.91
+tcl             Log clearance (L/h)    1.558 0.005638 0.3619
+tv                   Log volume (L)    3.908 0.004556 0.1166
+prop.cp Proportional residual error 0.008208 0.003606  43.93
              Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl             4.748 (4.696, 4.801)    4.159         NaN
-tv              49.79 (49.34, 50.23)    2.910         NaN
-prop.cp 0.008208 (0.001144, 0.01527)                     
+tcl             4.749 (4.696, 4.801)    4.155         NaN
+tv              49.79 (49.34, 50.23)    2.911         NaN
+prop.cp 0.008208 (0.001140, 0.01528)                     
  
   Covariance Type (fit_wrong$covMethod): r,s
   Some strong fixed parameter correlations exist (fit_wrong$cor) :
                 cor:tv,tcl        cor:prop.cp,tcl      cor:om.eta.cl,tcl 
-               0.0135                 -0.780                  0.118  
+               0.0133                 -0.781                  0.119  
       cor:om.eta.v,tcl         cor:prop.cp,tv       cor:om.eta.cl,tv 
-                0.268                 -0.212                 -0.496  
+                0.268                 -0.210                 -0.497  
        cor:om.eta.v,tv  cor:om.eta.cl,prop.cp   cor:om.eta.v,prop.cp 
-                0.561                  0.140                 -0.261  
+                0.561                  0.137                 -0.259  
 cor:om.eta.v,om.eta.cl 
                -0.349  
  
@@ -252,7 +252,7 @@ cor:om.eta.v,om.eta.cl
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Information about run found (fit_wrong$runInfo):
    • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
-   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.4e-06, cond 4.17e+05), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `prop.cp`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
+   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.4e-06, cond 4.16e+05), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `prop.cp`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
    • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. 
   Censoring (fit_wrong$censInformation): No censoring
   Minimization message (fit_wrong$message):  
@@ -266,7 +266,7 @@ variability is not:
 
 round(diag(fit$omega) / diag(fit_wrong$omega), 1)
 #> eta.cl  eta.v 
-#>   36.7   44.6
+#>   36.6   44.0
 ```
 
 `Omega` shrinks by more than an order of magnitude on both random
@@ -284,7 +284,7 @@ Nothing in the *point estimates* warns you. The *precision* does:
 round(c(RSE_CL_correct = fit$parFixedDf["tcl", "%RSE"],
         RSE_CL_wrong   = fit_wrong$parFixedDf["tcl", "%RSE"]), 3)
 #> RSE_CL_correct   RSE_CL_wrong 
-#>          2.146          0.362
+#>          2.142          0.362
 ```
 
 Clearance comes back not just right but implausibly certain — its
@@ -405,7 +405,7 @@ knitr::kable(tbl, row.names = FALSE,
 | Assumed SD       |   CL |     V | var(eta.cl) | var(eta.v) |
 |:-----------------|-----:|------:|------------:|-----------:|
 | 0.5x (too small) | 4.74 | 49.89 |       0.016 |      0.010 |
-| 1x (correct)     | 4.74 | 49.96 |       0.063 |      0.038 |
+| 1x (correct)     | 4.74 | 49.96 |       0.063 |      0.037 |
 | 2x (too large)   | 4.77 | 49.87 |       0.242 |      0.102 |
 | 4x (too large)   | 2.02 |  1.02 |       0.001 |      5.937 |
 

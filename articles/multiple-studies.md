@@ -146,7 +146,7 @@ admc -3351.412 -3329.412 -3257.767       1675.706
 ── Time (sec fit_multi$time): ──
 
   optimize covariance other elapsed
-1   79.861     33.573     0 113.434
+1   75.438     32.819     0 108.257
 
 ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 
@@ -215,7 +215,7 @@ cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2
    • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
   Censoring (fit_multi$censInformation): No censoring
   Minimization message (fit_multi$message):  
-    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+    NLOPT_FAILURE: Generic failure code. 
 ```
 
 Nothing above assumes the two share a dose or a schedule. The objective

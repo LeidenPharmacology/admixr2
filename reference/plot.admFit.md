@@ -102,8 +102,8 @@ on their own.
 ## Why the covariate panels are separate
 
 With aggregate data a covariate effect is identified BETWEEN studies:
-the renal exponent in
-[`vignette("covariates")`](https://leidenpharmacology.github.io/admixr2/articles/covariates.md)
+the renal exponent in the covariates article
+(<https://leidenpharmacology.github.io/admixr2/articles/covariates.html>)
 is recovered from three cohorts sitting at three different
 creatinine-clearance medians, none of which fitted a renal term at all.
 The `"mean"` and `"cov"` panels are per study and in isolation, so every
@@ -250,7 +250,7 @@ fit <- nlmixr2(
 #> | 0010     |  1768.15 |    4.967 |    29.88 |   0.2587 |   0.0888 |  0.04603 |
 #> | 0020     |   862.47 |    6.391 |    37.74 |   0.3864 |  0.08003 |   0.0422 |
 #> | 0029 ✓   |   861.90 |    6.384 |    38.03 |     0.39 |  0.08051 |  0.04074 |
-#> | 0.9 sec  |          |          |          |          |          |          |
+#> | 0.5 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, Analytical-Hessian, sandwich, 6 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  

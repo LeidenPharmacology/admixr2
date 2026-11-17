@@ -79,16 +79,16 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.754      0.328     0   1.082 4.746
+elapsed    0.819      0.307     0   1.126 4.738
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
             Est.       SE   %RSE       Back-transformed(95%CI) BSV(CV%)
-tcl      0.03322  0.03552  106.9         1.034 (0.9643, 1.108)    27.92
-tv1        2.292  0.01961 0.8557          9.890 (9.517, 10.28)    15.12
-tq        0.8830  0.05657  6.406          2.418 (2.164, 2.702)         
-tv2       0.8678  0.02628  3.028          2.382 (2.262, 2.507)         
-prop.cp 0.004104 0.001770  43.13 0.004104 (6.351e-4, 0.007573)         
+tcl      0.03325  0.03551  106.8         1.034 (0.9643, 1.108)    27.92
+tv1        2.291  0.01962 0.8563          9.888 (9.515, 10.28)    15.12
+tq        0.8847  0.05662  6.400          2.422 (2.168, 2.707)         
+tv2       0.8684  0.02614  3.011          2.383 (2.264, 2.508)         
+prop.cp 0.004104 0.001776  43.27 0.004104 (6.236e-4, 0.007585)         
         Shrink(SD)%
 tcl             NaN
 tv1             NaN
@@ -104,7 +104,7 @@ prop.cp
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Information about run found (fit_plasma$runInfo):
    • "r,s" covariance is conditional on the ETAs; setCov() is marginal 
-   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.2e-07, cond 4.47e+06), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `prop.cp`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
+   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.2e-07, cond 4.49e+06), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `prop.cp`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
    • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. 
   Censoring (fit_plasma$censInformation): No censoring
   Minimization message (fit_plasma$message):  
@@ -207,7 +207,7 @@ adgh -88.64046 -72.64046 -36.70254       44.32023
 ── Time (sec fit_cns$time): ──
 
         optimize covariance other elapsed other
-elapsed    1.114      0.435     0   1.549 3.773
+elapsed    0.737      0.391     0   1.128 4.585
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
