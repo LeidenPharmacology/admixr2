@@ -98,6 +98,7 @@ test_that("the information equality holds: J(working weight) == 2H", {
   #     DIAGONAL one, so dF/dV_ii = N/Vt_ii rather than N (Vt^-1)_ii.
   #   * the marginal of the normal-theory weight as the var baseline, where the
   #     objective in fact assumes WORKING INDEPENDENCE across the m variances.
+  skip_on_cran()
   skip_if_not_installed("rxode2")
   # numDeriv is Suggests, so this has to degrade rather than error where it is
   # absent -- the companion TBS test below already guarded it and this one did not.
@@ -261,6 +262,7 @@ test_that("the expansion is exact for a SKEWED conditional residual", {
 })
 
 test_that("a residual the expansion cannot reach is refused, not approximated", {
+  skip_on_cran()
   skip_if_not_installed("rxode2")
   # ar() correlates the residual ACROSS timepoints, so conditional independence
   # fails and every cross term the expansion drops is real. Returning a weight
@@ -285,6 +287,7 @@ test_that("the weight's own S is the V_pred the objective scores against", {
   # laws and every block downstream is scaled wrong -- silently, since both are
   # finite and plausible. On lnorm the conditional mean is f exp(s/2), so an
   # unscaled C broke this while add/prop looked fine.
+  skip_on_cran()
   skip_if_not_installed("rxode2")
   TIMES <- c(2, 5, 9, 14); DOSE <- 100; NQ <- 11L; N <- 100L
   mods <- list(
@@ -360,6 +363,7 @@ test_that("a single-timepoint study gets a weight rather than an error", {
   # one-timepoint study reported covMethod = "r" and a "could not be computed"
   # warning instead of the correction. Pinned END TO END, because the unit test
   # above can only see the shape and not who calls it.
+  skip_on_cran()
   skip_if_not_installed("rxode2")
   .mod <- function() {
     ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; prop.err <- 0.15 })
@@ -396,6 +400,7 @@ test_that("a model the sandwich does not APPLY to is a message, not a warning", 
   # failure, which nlmixr2est then carries onto fit$runInfo. A refusal by
   # construction is reported as a message naming the reason instead; a genuine
   # failure still warns.
+  skip_on_cran()
   skip_if_not_installed("rxode2")
   mk <- function(f) {
     ui <- suppressMessages(rxode2::rxode2(f))
@@ -477,6 +482,7 @@ test_that("the analytic moment Jacobian matches the finite-difference oracle", {
   # different adaptive steps and disagree by ~7e-5 no matter the FD step. That
   # is a model-consistency difference, not a derivative error, and it would make
   # this test measure the solver instead of the algebra.
+  skip_on_cran()
   skip_if_not_installed("rxode2")
   TT <- c(2, 5, 9, 14); DOSE <- 100; NQ <- 9L; N <- 100L
   mods <- list(
@@ -536,6 +542,7 @@ test_that("the analytic moment Jacobian matches the finite-difference oracle", {
 })
 
 test_that(".admMomentJac refuses rather than approximates what it cannot reach", {
+  skip_on_cran()
   skip_if_not_installed("rxode2")
   TT <- c(2, 5, 9); DOSE <- 100
   fn <- function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.5 })
@@ -657,6 +664,7 @@ test_that("the information equality holds on a TBS endpoint too", {
   # holding exactly says the two halves the sandwich shares are consistent for
   # TBS. The gap lives entirely in the objective's own second-order expansion,
   # not in the sandwich's reading of it.
+  skip_on_cran()
   skip_if_not_installed("rxode2")
   skip_if_not_installed("numDeriv")
   TIMES <- c(4, 8, 12, 16); DOSE <- 100; NQ <- 9L; N <- 100L
