@@ -51,9 +51,9 @@ Four estimators are available:
 | Gauss-Hermite | `"adgh"` | `adghControl()` | Deterministic quadrature over η; noise-free, unbiased at any IIV |
 | Iterative Reweighting MC | `"adirmc"` | `adirmcControl()` | Proposals fixed per phase; inner loop needs no new rxSolve calls |
 
-Start with `adfo` for screening and initial estimates. `admc` is the workhorse
-for standard PK models; `adgh` is its noise-free alternative, most efficient when
-there are few random effects; `adirmc` suits expensive ODE solves,
+Start with `adfo` for screening and initial estimates. `adgh` is deterministic and
+most efficient with few random effects, so it is used for the fit below; `admc` is
+the workhorse for standard PK models; `adirmc` suits expensive ODE solves,
 high-dimensional IIV or poor starting values. See
 `vignette("estimator-comparison")`.
 
@@ -155,17 +155,16 @@ study
 
 ## Fitting
 
-Collect the studies with `admStudies()` and pass them to `admControl()`:
+Collect the studies with `admStudies()` and pass them to `adghControl()`. Gauss-Hermite
+quadrature is deterministic, so the same call always gives the same fit:
 
 ```{r fit}
 fit <- nlmixr2(
-  pk_model, admData(), est = "admc",
-  control = admControl(
-    studies   = admStudies(examplomycin = study),
-    n_sim     = 5000L,
-    cov_n_sim = 10000L,
-    maxeval   = 300L,
-    seed      = 1L
+  pk_model, admData(), est = "adgh",
+  control = adghControl(
+    studies = admStudies(examplomycin = study),
+    maxeval = 300L,
+    cores   = 2L
   )
 )
 ```

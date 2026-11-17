@@ -1958,7 +1958,7 @@ admMoments <- function(fit, n_sim = NULL, seed = 1L,
 #'
 #' @section Why the covariate panels are separate:
 #' With aggregate data a covariate effect is identified BETWEEN studies: the
-#' renal exponent in `vignette("covariates")` is recovered from three cohorts
+#' renal exponent in the covariates article (<https://leidenpharmacology.github.io/admixr2/articles/covariates.html>) is recovered from three cohorts
 #' sitting at three different creatinine-clearance medians, none of which fitted
 #' a renal term at all. The `"mean"` and `"cov"` panels are per study and in
 #' isolation, so every source can sit beautifully on its own panel while the

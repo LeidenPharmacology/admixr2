@@ -17,7 +17,7 @@ A data frame with 5000 rows and 6 columns:
 }
 \source{
 Generated from a two-compartment PK model using \code{rxode2::rxSolve()}.
-See \code{vignette("admixr2")} for a full modelling example.
+See \url{https://leidenpharmacology.github.io/admixr2/articles/admixr2.html} for a full modelling example.
 }
 \usage{
 examplomycin

@@ -73,8 +73,9 @@
 
 ## Bug fixes
 
-* The shipped vignette links to the other articles on the package website rather than to files
-  that are not in the package (CRAN incoming flagged them as invalid file URIs).
+* **The package no longer ships a vignette**; all articles live on the package website
+  (<https://leidenpharmacology.github.io/admixr2/>). R CMD check on CRAN's Windows R-devel was over the
+  10-minute limit, and rebuilding the vignette was 213 s of it.
 
 * **Observation times out of order fitted the wrong data, silently, on all four
   estimators.** `rxSolve()` returns predictions in time order, while `E` and `V`
