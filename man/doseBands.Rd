@@ -4,7 +4,15 @@
 \alias{doseBands}
 \title{A dosing table by covariate band}
 \usage{
-doseBands(covariate, breaks, amt, ..., per = NULL)
+doseBands(
+  covariate,
+  breaks,
+  amt,
+  ...,
+  per = NULL,
+  start = NULL,
+  duration = NULL
+)
 }
 \arguments{
 \item{covariate}{The covariate the bands are cut on, bare or quoted
@@ -27,9 +35,18 @@ one per band. Without them each band gets one bolus at time 0.}
 quoted: \code{per = WT} reads \code{amt = c(5, 10)} as 5 and 10 mg/kg. It must be
 declared in the study's \code{population}. For a cap or any other formula use
 functions in \code{amt} instead.}
+
+\item{start}{Optional time the doses start (the same as \code{time}), e.g.
+\code{start = 120} for an oral phase from day 5. One value, or one per band.}
+
+\item{duration}{Optional length of the dosing period, e.g. \code{duration = 120}
+for five days: doses are given every \code{ii} from \code{start} while they fall
+before \code{start + duration}. Needs \code{ii}; replaces \code{addl}/\code{until}. One value,
+or one per band.}
 }
 \value{
-An \code{admDoseBands} object, to pass as \code{dose} to \code{\link[=admStudy]{admStudy()}}.
+An \code{admDoseBands} object, to pass as \code{dose} to \code{\link[=admStudy]{admStudy()}}. It
+prints as the dosing table, one row per band and dose.
 }
 \description{
 Transcribes a paper's dosing table, e.g. "CrCl below 30 mL/min: 100 mg;
@@ -45,10 +62,18 @@ in the band above it. Anything else about how each dose is given ---
 Each is one value, shared by every band, or one value per band, so the
 regimen itself can depend on the covariate (\code{ii = c(24, 12)}).
 
-Several doses in a band (an oral dose plus an infusion, or an IV phase
-followed by an oral phase): give \code{amt} as a list and the per-dose details as
-vectors inside lists (a length-1 list is shared by all bands), e.g.
-\verb{amt = list(c(500, 100), c(1000, 200)), cmt = list(c("depot", "centr")), dur = list(c(0, 1))}.
+How long to dose can be given three ways: \code{addl} (doses after the first, as
+in rxode2), \code{until} (the time of the last dose allowed --- rxode2's, and
+INCLUSIVE, so \code{until = 120} with \code{ii = 12} doses at 120 too), or \code{duration}
+(doses every \code{ii} from \code{start} while they fall before \code{start + duration}, so
+\code{duration = 120} is five days at any interval).
+
+\strong{Phases} (5 days IV, then 16 days oral) are written one \code{doseBands()} per
+phase and added: \code{iv + oral}, with the later phase given its \code{start}. See
+\link{+.admDoseBands}. The same can be written in one call by giving \code{amt} as a
+list and the per-dose details as vectors inside lists (a length-1 list is
+shared by all bands), e.g. \verb{amt = list(c(500, 100), c(1000, 200)), cmt = list(c("depot", "centr")), dur = list(c(0, 1))} --- also the way to
+give several doses AT ONCE (an oral dose plus an infusion).
 
 \strong{A band's dose may itself depend on a covariate}, e.g. "CrCl below 30:
 5 mg/kg, otherwise 10 mg/kg":
@@ -83,8 +108,22 @@ doseBands(CRCL, breaks = c(25, 40, 60), amt = c(450, 450, 450, 900),
 # an oral dose AND a 1-h infusion at the same time, in every band
 doseBands(CRCL, breaks = 30, amt = list(c(500, 100), c(1000, 200)),
           cmt = list(c("depot", "centr")), dur = list(c(0, 1)))
-# 5 days of IV (daily 1-h infusions) followed by 16 days oral, per band
-doseBands(CRCL, breaks = 30, amt = list(c(500, 250), c(1000, 500)),
+# a paper's table: mg/kg as a 1-h infusion, interval by CrCl, for 7 days
+doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
+          per = WT, dur = 1, ii = c(24, 24, 12, 12), duration = 168)
+# the same, with rxode2's own counting (addl doses after the first, or until)
+doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
+          per = WT, dur = 1, ii = c(24, 24, 12, 12), addl = c(6, 6, 13, 13))
+doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
+          per = WT, dur = 1, ii = c(24, 24, 12, 12), until = 167)
+# 5 days IV, then 16 days oral: one doseBands() per phase, added
+iv   <- doseBands(CRCL, breaks = 30, amt = c(250, 500), dur = 1, ii = 24,
+                  duration = 120)
+oral <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "depot",
+                  ii = 24, start = 120, duration = 384)
+iv + oral
+# ... or in one call, two doses per band
+doseBands(CRCL, breaks = 30, amt = list(c(250, 250), c(500, 500)),
           time = list(c(0, 120)), cmt = list(c("centr", "depot")),
           dur = list(c(1, 0)), ii = 24, addl = list(c(4, 15)))
 # mg/kg, with the mg/kg depending on the band

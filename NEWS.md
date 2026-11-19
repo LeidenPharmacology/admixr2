@@ -18,6 +18,21 @@
   step: at the default 9 nodes the low band held 0.125 of the patients against
   an exact 0.129, and more nodes did not converge to it.
 
+* **Dosing phases are added together.** "5 days IV, then 16 days oral" is one
+  `doseBands()` per phase, added: `iv + oral`. The later phase gets a `start`,
+  and the phases may use different cut points (merged automatically). A plain
+  amount, or on R >= 4.3 an `rxode2::et()` table, adds a dose everyone gets,
+  such as a loading dose. The one-call form with nested lists still works.
+
+* **`duration =` says how long to dose**, e.g. `duration = 120` for five days
+  at any interval, instead of counting `addl` per band. `addl` and rxode2's
+  `until` still work; note that `until` is inclusive, so `until = 120` with
+  `ii = 12` also doses at 120 h.
+
+* **A dose rule prints as the dosing table**, one row per band and dose, with
+  columns named as in `rxode2::et()`, both on its own and in `print()` of a
+  study.
+
 * **admixr2 now says where a dose rule jumps or bends**, for a dose function of
   any number of covariates and for each band's own dose. The warning names the
   covariate and the value (`it jumps where CRCL is about 30`) and gives the

@@ -1127,7 +1127,7 @@ test_that("print() shows the dose rule", {
                                times = 1:2,
                                dose = doseBands(CRCL, 30, c(100, 200),
                                                 ii = 12, addl = 6))),
-                "CRCL < 30: 100; CRCL >= 30: 200  \\(ii = 12, addl = 6\\)")
+                ">= 30 +200 +12 +6")
   expect_output(print(admStudy(model = .sa_fitwt, population = pop, n = 10,
                                times = 1:2, dose = function(WT) 2 * WT)),
                 "dose = f\\(WT\\).*function\\(WT\\) 2 \\* WT")
@@ -1446,6 +1446,102 @@ test_that("a step or a cap in a dose rule is found and named, for any covariates
                                                     function(WT) pmin(10 * WT, 750)))),
                  "the dose in band .CRCL >= 30. is not smooth: it bends")
   expect_warning(st(dose = doseBands(CRCL, 30, c(5, 10), per = WT)), NA)
+})
+
+# -- phases added with `+`, `start`/`duration`, the table print ----------------
+
+.sa_ev <- function(d, k, cov = list(WT = 70)) {
+  x <- as.data.frame(admixr2:::.admDoseBandEv(d, k, cov))
+  x[x$evid != 0, intersect(c("time", "amt", "ii", "addl"), names(x)), drop = FALSE]
+}
+
+test_that("`duration` counts doses at any interval; `until` stays rxode2's", {
+  d <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
+                 per = WT, dur = 1, ii = c(24, 24, 12, 12), duration = 168)
+  expect_equal(vapply(1:4, function(k) .sa_ev(d, k)$addl, 0), c(6, 6, 13, 13))
+  # 5 days: last dose BEFORE 120 h at either interval
+  d5 <- doseBands(CRCL, 30, c(1, 2), ii = c(24, 12), duration = 120)
+  expect_equal(vapply(1:2, function(k) .sa_ev(d5, k)$addl, 0), c(4, 9))
+  # a duration shorter than one interval is one dose
+  expect_equal(nrow(.sa_ev(doseBands(CRCL, 30, c(1, 2), ii = 24, duration = 6), 1)), 1L)
+  # until passes straight through, inclusive as in rxode2
+  expect_equal(.sa_ev(doseBands(CRCL, 30, c(1, 2), ii = 12, until = 120), 1)$addl, 10)
+  expect_error(doseBands(CRCL, 30, c(1, 2), duration = 120), "needs a dosing interval")
+  expect_error(doseBands(CRCL, 30, c(1, 2), ii = 12, until = 9, duration = 120),
+               "not both")
+  expect_error(doseBands(CRCL, 30, c(1, 2), ii = 12, duration = -1), "positive")
+  expect_error(doseBands(CRCL, 30, c(1, 2), time = 1, start = 2), "give one")
+  expect_equal(.sa_ev(doseBands(CRCL, 30, c(1, 2), start = 120), 2)$time, 120)
+})
+
+test_that("phases added with + give each band both regimens", {
+  iv   <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
+                    per = WT, dur = 1, ii = c(24, 24, 12, 12), duration = 120)
+  oral <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(5, 5, 10, 10),
+                    per = WT, cmt = "depot", ii = 24, start = 120, duration = 384)
+  d <- iv + oral
+  expect_s3_class(d, "admDoseBands")
+  expect_identical(admixr2:::.admDoseCovs(d), c("CRCL", "WT"))
+  # the same doses as the one-call nested-list form, in every band
+  lst <- doseBands(CRCL, breaks = c(25, 50, 70),
+                   amt = list(c(1.25, 5), c(2.5, 5), c(2.5, 10), c(5, 10)), per = WT,
+                   time = list(c(0, 120)), cmt = list(c("centr", "depot")),
+                   dur = list(c(1, 0)),
+                   ii = list(c(24, 24), c(24, 24), c(12, 24), c(12, 24)),
+                   addl = list(c(4, 15), c(4, 15), c(9, 15), c(9, 15)))
+  for (k in 1:4)
+    expect_equal(.sa_ev(d, k), .sa_ev(lst, k), ignore_attr = TRUE)
+  # different cut points merge; each merged band takes its phases' bands
+  d2 <- iv + doseBands(CRCL, breaks = 30, amt = c(100, 200), cmt = "depot",
+                       start = 120)
+  expect_equal(d2$breaks, c(25, 30, 50, 70))
+  expect_equal(.sa_ev(d2, 2)$amt, c(175, 100))   # 25-30: iv 2.5 x 70, oral 100
+  expect_equal(.sa_ev(d2, 3)$amt, c(175, 200))   # 30-50: oral 200
+  # an amount for everyone (any R); an et() table where R lets `+` dispatch
+  expect_equal(.sa_ev(100 + doseBands(CRCL, 30, c(1, 2), start = 12), 2)$amt,
+               c(100, 2))
+  if (exists("chooseOpsMethod", envir = baseenv()))
+    expect_equal(.sa_ev(rxode2::et(amt = 1000, dur = 1) +
+                          doseBands(CRCL, 30, c(250, 500), start = 12), 1)$amt,
+                 c(1000, 250))
+  expect_error(iv + doseBands(WT, 60, c(1, 2)), "SAME covariate")
+  expect_error(iv + "a lot", "can be added")
+})
+
+test_that("a dose rule prints as the dosing table", {
+  iv   <- doseBands(CRCL, breaks = 30, amt = c(2.5, 5), per = WT, dur = 1,
+                    ii = c(24, 12), duration = 120)
+  oral <- doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT, cmt = "depot",
+                    ii = 24, start = 120, duration = 384)
+  tab <- admixr2:::.admDoseTable(iv + oral)
+  expect_named(tab, c("CRCL", "amt", "cmt", "time", "dur", "ii", "duration"))
+  expect_equal(tab$CRCL, c("< 30", "", ">= 30", ""))
+  expect_equal(tab$amt, c("2.5 x WT", "5 x WT", "5 x WT", "10 x WT"))
+  expect_equal(tab$time, c("-", "120", "-", "120"))
+  expect_output(print(iv + oral), "Dosing by CRCL band:")
+  # a function band prints its arguments
+  expect_equal(admixr2:::.admDoseTable(doseBands(CRCL, 30,
+    list(function(WT) 5 * WT, 300)))$amt, c("f(WT)", "300"))
+})
+
+test_that("phases added together expand and fit-check like one doseBands()", {
+  skip_if_not_installed("rxode2")
+  iv   <- doseBands(CRCL, breaks = 30, amt = c(2.5, 5), per = WT, dur = 1,
+                    ii = c(24, 12), duration = 120)
+  oral <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "depot",
+                    ii = 24, start = 120, duration = 384)
+  s <- admStudy(model = .sa_oral, population = .sa_popwc, n = 40,
+                times = c(1, 100, 200), strata_nodes = 3L, dose = iv + oral)
+  expect_output(print(s), ">= 30 +5 x WT")
+  m <- admixr2:::.admMaterialise(admStudies(s = s))
+  expect_equal(sum(vapply(m, function(x) x$n, 0)), 40, tolerance = 1e-8)
+  for (x in m) {
+    e <- as.data.frame(x$ev); e <- e[e$evid != 0, ]
+    hi <- x$cov$CRCL >= 30
+    expect_equal(e$amt, c((if (hi) 5 else 2.5) * x$cov$WT, if (hi) 500 else 250),
+                 tolerance = 1e-10)
+    expect_equal(e$time, c(0, 120))
+  }
 })
 
 test_that(".admDoseRoughAlong tells a step from a kink from a smooth curve", {

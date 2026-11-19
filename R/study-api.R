@@ -725,7 +725,7 @@ admStudy <- function(model = NULL, est = NULL,
       .bcd <- .admCovDistCanon(population)
       .nrng <- if (is.list(range) && !is.null(names(range))) range else NULL
       .nn <- strata_nodes %||% .ADM_STRATA_NODES
-      for (.k in seq_along(dose$amt)) {
+      for (.k in seq_len(.admDoseNBands(dose))) {
         .S <- .admDoseBandNodeSet(.bcd, dose, .k)
         if (is.null(.S)) next
         .span <- .admDoseBandSpan(dose, .k, .brng)
@@ -742,7 +742,9 @@ admStudy <- function(model = NULL, est = NULL,
           tryCatch(.admDoseBandAmt(dose, .k, .nd$cov),
                    error = function(e) bad(sub("^admixr2: ", "",
                                                conditionMessage(e))))
-        .ak <- dose$amt[[.k]]
+        # one vectorised call where the band's dose is one amount rule; phases
+        # added together are probed point by point
+        .ak <- if (is.null(dose$phases)) dose$amt[[.k]]
         .vf <- if (is.function(.ak)) .ak
                else if (length(.ak) == 1L)
                  function(...) .ak * list(...)[[dose$per]]
@@ -808,8 +810,12 @@ print.admStudy <- function(x, ...) {
   dz <- .admDoseLabel(x$dose)
   cat(sprintf("  design    n = %s, %s, %d times (%g - %g)\n",
               format(x$n), dz, length(x$times), min(x$times), max(x$times)))
-  if (inherits(x$dose, "admDoseBands"))
-    cat("  dose      ", format(x$dose), "\n", sep = "")
+  if (inherits(x$dose, "admDoseBands")) {
+    cat("  dose      by ", x$dose$covariate, " band:\n", sep = "")
+    cat(paste0("            ", utils::capture.output(
+      print(.admDoseTable(x$dose), row.names = FALSE, right = FALSE))),
+      sep = "\n")
+  }
   if (is.function(x$dose))
     cat("  dose      function(", paste(.admDoseCovs(x$dose), collapse = ", "),
         ") ", paste(deparse(body(x$dose)), collapse = " "), "\n", sep = "")

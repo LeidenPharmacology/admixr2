@@ -12,11 +12,19 @@
 #' Each is one value, shared by every band, or one value per band, so the
 #' regimen itself can depend on the covariate (`ii = c(24, 12)`).
 #'
-#' Several doses in a band (an oral dose plus an infusion, or an IV phase
-#' followed by an oral phase): give `amt` as a list and the per-dose details as
-#' vectors inside lists (a length-1 list is shared by all bands), e.g.
-#' `amt = list(c(500, 100), c(1000, 200)), cmt = list(c("depot", "centr")),
-#' dur = list(c(0, 1))`.
+#' How long to dose can be given three ways: `addl` (doses after the first, as
+#' in rxode2), `until` (the time of the last dose allowed --- rxode2's, and
+#' INCLUSIVE, so `until = 120` with `ii = 12` doses at 120 too), or `duration`
+#' (doses every `ii` from `start` while they fall before `start + duration`, so
+#' `duration = 120` is five days at any interval).
+#'
+#' **Phases** (5 days IV, then 16 days oral) are written one `doseBands()` per
+#' phase and added: `iv + oral`, with the later phase given its `start`. See
+#' [+.admDoseBands]. The same can be written in one call by giving `amt` as a
+#' list and the per-dose details as vectors inside lists (a length-1 list is
+#' shared by all bands), e.g. `amt = list(c(500, 100), c(1000, 200)),
+#' cmt = list(c("depot", "centr")), dur = list(c(0, 1))` --- also the way to
+#' give several doses AT ONCE (an oral dose plus an infusion).
 #'
 #' **A band's dose may itself depend on a covariate**, e.g. "CrCl below 30:
 #' 5 mg/kg, otherwise 10 mg/kg":
@@ -53,7 +61,14 @@
 #'   quoted: `per = WT` reads `amt = c(5, 10)` as 5 and 10 mg/kg. It must be
 #'   declared in the study's `population`. For a cap or any other formula use
 #'   functions in `amt` instead.
-#' @return An `admDoseBands` object, to pass as `dose` to [admStudy()].
+#' @param start Optional time the doses start (the same as `time`), e.g.
+#'   `start = 120` for an oral phase from day 5. One value, or one per band.
+#' @param duration Optional length of the dosing period, e.g. `duration = 120`
+#'   for five days: doses are given every `ii` from `start` while they fall
+#'   before `start + duration`. Needs `ii`; replaces `addl`/`until`. One value,
+#'   or one per band.
+#' @return An `admDoseBands` object, to pass as `dose` to [admStudy()]. It
+#'   prints as the dosing table, one row per band and dose.
 #' @seealso [admStudy()]; a function of covariates as `dose` for dosing that is
 #'   a smooth formula of covariates with no step, e.g. mg/kg for everyone.
 #' @examples
@@ -69,8 +84,22 @@
 #' # an oral dose AND a 1-h infusion at the same time, in every band
 #' doseBands(CRCL, breaks = 30, amt = list(c(500, 100), c(1000, 200)),
 #'           cmt = list(c("depot", "centr")), dur = list(c(0, 1)))
-#' # 5 days of IV (daily 1-h infusions) followed by 16 days oral, per band
-#' doseBands(CRCL, breaks = 30, amt = list(c(500, 250), c(1000, 500)),
+#' # a paper's table: mg/kg as a 1-h infusion, interval by CrCl, for 7 days
+#' doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
+#'           per = WT, dur = 1, ii = c(24, 24, 12, 12), duration = 168)
+#' # the same, with rxode2's own counting (addl doses after the first, or until)
+#' doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
+#'           per = WT, dur = 1, ii = c(24, 24, 12, 12), addl = c(6, 6, 13, 13))
+#' doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
+#'           per = WT, dur = 1, ii = c(24, 24, 12, 12), until = 167)
+#' # 5 days IV, then 16 days oral: one doseBands() per phase, added
+#' iv   <- doseBands(CRCL, breaks = 30, amt = c(250, 500), dur = 1, ii = 24,
+#'                   duration = 120)
+#' oral <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "depot",
+#'                   ii = 24, start = 120, duration = 384)
+#' iv + oral
+#' # ... or in one call, two doses per band
+#' doseBands(CRCL, breaks = 30, amt = list(c(250, 250), c(500, 500)),
 #'           time = list(c(0, 120)), cmt = list(c("centr", "depot")),
 #'           dur = list(c(1, 0)), ii = 24, addl = list(c(4, 15)))
 #' # mg/kg, with the mg/kg depending on the band
@@ -86,7 +115,8 @@
 #' }
 #' # admStudy(model, est, n, times, population, dose = f)
 #' @export
-doseBands <- function(covariate, breaks, amt, ..., per = NULL) {
+doseBands <- function(covariate, breaks, amt, ..., per = NULL, start = NULL,
+                      duration = NULL) {
   # a bare name is the covariate (doseBands(CRCL, ...)), unless it is a
   # variable holding a covariate name (cv <- "CRCL"; doseBands(cv, ...))
   cv  <- .admBareName(substitute(covariate), parent.frame())
@@ -127,17 +157,41 @@ doseBands <- function(covariate, breaks, amt, ..., per = NULL) {
           ".")
   }
   timing <- list(...)
+  tn <- names(timing)
+  if (length(timing) && (is.null(tn) || any(!nzchar(tn))))
+    bad("the dosing details in `...` must be named, e.g. ii = 12, addl = 6.")
+  # rxode2::et() IGNORES arguments it does not know, so a typo (`adl = 6`)
+  # would silently turn a regimen into a single dose.
+  unk <- setdiff(tn, .ADM_ET_TIMING)
+  if (length(unk))
+    bad(paste(sQuote(unk), collapse = ", "), " is not an rxode2::et() ",
+        "dosing argument this applies to every band; use ",
+        paste(.ADM_ET_TIMING, collapse = ", "),
+        ", or `start` and `duration`.")
+  if (!is.null(start)) {
+    if ("time" %in% tn)
+      bad("`start` and `time` both give when the doses start; give one.")
+    sv <- unlist(start)
+    if (!is.numeric(sv) || any(!is.finite(sv)) || any(sv < 0))
+      bad("`start` must be a time >= 0, e.g. start = 120 for day 5.")
+    timing$time <- start
+  }
+  # `duration` is admixr2's own: "5 days of IV" is duration = 120 whatever
+  # the interval. rxode2's `until` is INCLUSIVE, so until = 120 with ii = 12
+  # gives a dose AT 120 -- on top of the next phase's first dose.
+  if (!is.null(duration)) {
+    if (any(c("addl", "until") %in% tn))
+      bad("`duration` sets how many doses are given; give it or ",
+          "`addl`/`until`, not both.")
+    if (!"ii" %in% tn)
+      bad("`duration` needs a dosing interval, e.g. ii = 12, duration = 120.")
+    dv <- unlist(duration)
+    if (!is.numeric(dv) || any(!is.finite(dv)) || any(dv <= 0))
+      bad("`duration` must be a positive time, e.g. duration = 120 for 5 days.")
+    timing$duration <- duration
+  }
   if (length(timing)) {
     tn <- names(timing)
-    if (is.null(tn) || any(!nzchar(tn)))
-      bad("the dosing details in `...` must be named, e.g. ii = 12, addl = 6.")
-    # rxode2::et() IGNORES arguments it does not know, so a typo (`adl = 6`)
-    # would silently turn a regimen into a single dose.
-    unk <- setdiff(tn, .ADM_ET_TIMING)
-    if (length(unk))
-      bad(paste(sQuote(unk), collapse = ", "), " is not an rxode2::et() ",
-          "dosing argument this applies to every band; use ",
-          paste(.ADM_ET_TIMING, collapse = ", "), ".")
     k <- length(amt)
     badlen <- tn[!vapply(timing, function(v) length(v) %in% c(1L, k), logical(1))]
     if (length(badlen))
@@ -172,8 +226,72 @@ doseBands <- function(covariate, breaks, amt, ..., per = NULL) {
   eval(sx, env)
 }
 
+#' Add dosing phases together
+#'
+#' `iv + oral` gives each band the doses of both phases, e.g. five days of IV
+#' (`doseBands(..., duration = 120)`) followed by oral dosing from day 5
+#' (`doseBands(..., start = 120, duration = 384)`). The phases may use
+#' different cut points --- every band of the result gets the doses of the
+#' phase band it falls in --- but must band on the same covariate. A plain
+#' amount or an [rxode2::et()] table adds a phase every band gets, e.g. a
+#' loading dose for everyone (an `et()` table needs R >= 4.3, where a class may
+#' claim `+` from `data.frame`; an amount works on any R).
+#'
+#' @param e1,e2 [doseBands()] objects, or one of them an amount or an
+#'   [rxode2::et()] table.
+#' @return An `admDoseBands` object, to pass as `dose` to [admStudy()].
+#' @examples
+#' iv   <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
+#'                   per = WT, dur = 1, ii = c(24, 24, 12, 12), duration = 120)
+#' oral <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(5, 5, 10, 10),
+#'                   per = WT, cmt = "depot", ii = 24, start = 120,
+#'                   duration = 384)
+#' iv + oral
+#' # a 1000 mg loading dose for everyone, then the banded maintenance dose
+#' rxode2::et(amt = 1000, dur = 1) +
+#'   doseBands(CRCL, breaks = 30, amt = c(250, 500), dur = 1, ii = 12,
+#'             start = 12, duration = 156)
+#' @method + admDoseBands
+#' @export
+`+.admDoseBands` <- function(e1, e2) {
+  if (missing(e2)) return(e1)
+  ph <- function(x) if (inherits(x, "admDoseBands")) .admDosePhases(x)
+                    else list(.admDoseFixedPhase(x))
+  P   <- c(ph(e1), ph(e2))
+  cvs <- unique(unlist(lapply(P, function(p) if (!isTRUE(p$fixed)) p$covariate)))
+  if (length(cvs) != 1L)
+    stop("admixr2: phases added together must band on the SAME covariate; ",
+         "these band on ", paste(sQuote(cvs), collapse = " and "), ". For a ",
+         "dose that depends on both, give one phase per ", cvs[1L], " band ",
+         "with a function of ", cvs[2L], " as its amount.", call. = FALSE)
+  structure(list(covariate = cvs,
+                 breaks = sort(unique(unlist(lapply(P, `[[`, "breaks")))),
+                 phases = P),
+            class = "admDoseBands")
+}
+
+# Registered as chooseOpsMethod.admDoseBands on R >= 4.3 (see .onLoad): our `+`
+# wins over Ops.data.frame when the other operand is an rxode2::et() table.
+.admChooseOps <- function(x, y, mx, my, cl, reverse) TRUE
+
+# A phase every band gets: an amount or an event table, added to bands with `+`.
+.admDoseFixedPhase <- function(x) {
+  ev <- if (inherits(x, "rxEt")) x
+        else if (is.numeric(x) && length(x) == 1L && is.finite(x) && x >= 0)
+          rxode2::et(amt = as.numeric(x))
+        else stop("admixr2: only doseBands(), an amount or an rxode2::et() ",
+                  "table can be added to doseBands(); got ", class(x)[1L], ".",
+                  call. = FALSE)
+  structure(list(fixed = TRUE, ev = ev, breaks = numeric(0)),
+            class = "admDoseBands")
+}
+
 #' @export
 format.admDoseBands <- function(x, ...) {
+  if (!is.null(x$phases))
+    return(paste(vapply(x$phases, format, ""), collapse = "  +  "))
+  if (isTRUE(x$fixed))
+    return(paste0("everyone: ", paste(format(.admDoseFixedAmt(x)), collapse = "+")))
   k <- length(x$amt)
   a <- vapply(x$amt, function(v) {
     if (is.function(v))
@@ -198,13 +316,91 @@ format.admDoseBands <- function(x, ...) {
 
 #' @export
 print.admDoseBands <- function(x, ...) {
-  cat("dose by ", x$covariate, " band: ", format(x), "\n", sep = "")
+  if (isTRUE(x$fixed)) {
+    cat("Dose for everyone:", format(x), "\n")
+    return(invisible(x))
+  }
+  cat("Dosing by ", x$covariate, " band:\n", sep = "")
+  print(.admDoseTable(x), row.names = FALSE, right = FALSE)
   invisible(x)
+}
+
+# The dosing table as a paper prints it: one row per band and dose, columns
+# named as in rxode2::et(), "-" where a dose does not set that argument.
+.admDoseTable <- function(x) {
+  P <- .admDosePhases(x)
+  rows <- list()
+  for (j in seq_len(.admDoseNBands(x))) {
+    # the covariate heads the column, so the label is only the range
+    lab <- sub(paste0("^", x$covariate, " "), "", .admDoseBandWhere(x, j))
+    for (p in P) for (r in .admDosePhDisplay(p, .admDosePhaseIdx(x, p, j))) {
+      rows[[length(rows) + 1L]] <- c(band = lab, r)
+      lab <- ""
+    }
+  }
+  ord  <- c("band", "amt", "cmt", "time", "dur", "rate", "ii", "addl", "until",
+            "duration", "ss")
+  cols <- unique(unlist(lapply(rows, names)))
+  cols <- c(intersect(ord, cols), setdiff(cols, ord))
+  m <- do.call(rbind, lapply(rows, function(r) {
+    v <- stats::setNames(rep("-", length(cols)), cols); v[names(r)] <- r; v
+  }))
+  df <- as.data.frame(m, stringsAsFactors = FALSE)
+  names(df)[1L] <- x$covariate
+  df
+}
+
+# One phase band's doses for the table: a list of named character rows.
+.admDosePhDisplay <- function(p, i) {
+  if (isTRUE(p$fixed)) {
+    d <- as.data.frame(p$ev)
+    d <- d[!is.na(d$evid) & !(d$evid %in% c(0L, 2L, 3L)), , drop = FALSE]
+    keep <- intersect(c("amt", "cmt", "time", "dur", "rate", "ii", "addl", "ss"),
+                      names(d))
+    return(lapply(seq_len(nrow(d)), function(r) {
+      v <- vapply(keep, function(cn) format(d[[cn]][r], trim = TRUE), "")
+      zero <- keep %in% c("dur", "rate", "ii", "addl", "ss") &
+        suppressWarnings(as.numeric(v)) %in% 0
+      v[!(zero | v %in% c("(default)", "NA"))]
+    }))
+  }
+  k  <- length(p$amt)
+  a  <- p$amt[[i]]
+  tv <- lapply(p$timing, .admDoseAt, j = i, k = k)
+  m  <- max(c(if (is.function(a)) 1L else length(a), lengths(tv)))
+  am <- if (is.function(a)) {
+    f <- paste0("f(", paste(names(formals(a)), collapse = ", "), ")")
+    if (m > 1L) paste0(f, " [", seq_len(m), "]") else f
+  } else {
+    s <- vapply(a, format, "")
+    if (!is.null(p$per)) s <- paste(s, "x", p$per)
+    rep_len(s, m)
+  }
+  lapply(seq_len(m), function(r)
+    c(amt = am[r], vapply(tv, function(v)
+      format(v[[(r - 1L) %% length(v) + 1L]], trim = TRUE), "")))
 }
 
 # The rxode2::et() arguments that say WHEN and HOW a dose is given, not how
 # much: what doseBands() passes on to every band.
 .ADM_ET_TIMING <- c("time", "cmt", "ii", "addl", "dur", "rate", "ss", "until")
+
+# Phases. A doseBands() object is ONE phase; `a + b` holds several, on the
+# merged cut points, and every reader below goes through these, so a band of a
+# combined object is the doses of each phase's band it falls in.
+.admDosePhases <- function(d) d$phases %||% list(d)
+.admDoseNBands <- function(d) length(d$breaks) + 1L
+.admDosePhaseIdx <- function(d, p, j) {
+  if (is.null(d$phases)) return(j)
+  if (isTRUE(p$fixed)) return(1L)
+  # a value on a cut point falls in the band above, so the merged band's lower
+  # edge picks the phase band
+  findInterval(c(-Inf, d$breaks)[j], p$breaks) + 1L
+}
+.admDoseFixedAmt <- function(p) {
+  d <- as.data.frame(p$ev)
+  as.numeric(d$amt[!is.na(d$evid) & !(d$evid %in% c(0L, 2L, 3L))])
+}
 
 # What kind of dose rule `dose` is: a fixed amount, a full event table, a
 # banded table, or a function of covariates. NA for anything else.
@@ -220,7 +416,7 @@ print.admDoseBands <- function(x, ...) {
 # is proportional to (`per`) or a function of; or a function's arguments.
 .admDoseCovs <- function(d) {
   if (inherits(d, "admDoseBands"))
-    return(unique(c(d$covariate, unlist(lapply(seq_along(d$amt),
+    return(unique(c(d$covariate, unlist(lapply(seq_len(.admDoseNBands(d)),
                                                .admDoseBandAmtCovs, d = d)))))
   if (is.function(d)) return(names(formals(d)))
   character(0)
@@ -239,25 +435,39 @@ print.admDoseBands <- function(x, ...) {
 }
 
 # The covariates band j's AMOUNT reads (not the banded one, which only picks the
-# band): its function's arguments, or `per`. Empty for a plain amount.
-.admDoseBandAmtCovs <- function(d, j) {
-  a <- d$amt[[j]]
+# band): its function's arguments, or `per`, over every phase. Empty for plain
+# amounts.
+.admDoseBandAmtCovs <- function(d, j)
+  unique(unlist(lapply(.admDosePhases(d), function(p)
+    .admDosePhAmtCovs(p, .admDosePhaseIdx(d, p, j)))))
+.admDosePhAmtCovs <- function(p, i) {
+  if (isTRUE(p$fixed)) return(character(0))
+  a <- p$amt[[i]]
   if (is.function(a)) names(formals(a))
-  else if (!is.null(d$per)) d$per
+  else if (!is.null(p$per)) p$per
   else character(0)
 }
 
-# Band j's amount(s) at one node `cov` (a named list of covariate values), checked.
-.admDoseBandAmt <- function(d, j, cov = NULL) {
-  a  <- d$amt[[j]]
-  cv <- .admDoseBandAmtCovs(d, j)
+# Band j's amount(s) at one node `cov` (a named list of covariate values),
+# checked; every phase's, in phase order.
+.admDoseBandAmt <- function(d, j, cov = NULL)
+  unlist(lapply(.admDosePhases(d), function(p)
+    .admDosePhAmt(p, .admDosePhaseIdx(d, p, j), cov,
+                  function() .admDoseBandWhere(d, j))))
+
+# Phase band i's amount(s); `where()` names the band for an error message.
+.admDosePhAmt <- function(p, i, cov = NULL, where = function() i) {
+  if (isTRUE(p$fixed)) return(.admDoseFixedAmt(p))
+  d  <- p
+  a  <- d$amt[[i]]
+  cv <- .admDosePhAmtCovs(d, i)
   if (!length(cv)) return(a)
   if (is.null(cov) || !all(cv %in% names(cov)))
-    stop("admixr2: internal: band ", j, "'s dose reads ",
+    stop("admixr2: internal: band ", i, "'s dose reads ",
          paste(cv, collapse = ", "), ", but no value was given.", call. = FALSE)
   at <- paste(sprintf("%s = %s", cv, vapply(cov[cv], function(v)
     format(signif(as.numeric(v), 4)), character(1))), collapse = ", ")
-  where <- paste0("in band ", sQuote(.admDoseBandWhere(d, j)), " at ", at)
+  where <- paste0("in band ", sQuote(where()), " at ", at)
   r <- if (is.function(a))
          tryCatch(do.call(a, as.list(cov)[cv]), error = function(e)
            stop("admixr2: doseBands(): the dose function failed ", where, ": ",
@@ -287,13 +497,31 @@ print.admDoseBands <- function(x, ...) {
 # When a band's arguments hold several values they are several simultaneous
 # doses (recycled to the longest), e.g. amt = list(c(500, 100), 1000),
 # cmt = c("depot", "centr") for an oral dose plus an infusion.
+#
+# Several phases (`iv + oral`) are merged by time with rxode2's own rbind().
 .admDoseBandEv <- function(d, j, cov = NULL) {
-  k <- length(d$amt)
-  a <- c(list(amt = .admDoseBandAmt(d, j, cov)),
-         lapply(d$timing, .admDoseAt, j = j, k = k))
+  evs <- lapply(.admDosePhases(d), function(p)
+    .admDosePhEv(p, .admDosePhaseIdx(d, p, j), cov,
+                 function() .admDoseBandWhere(d, j)))
+  if (length(evs) == 1L) evs[[1L]] else Reduce(rbind, evs)
+}
+.admDosePhEv <- function(p, i, cov = NULL, where = function() i) {
+  if (isTRUE(p$fixed)) return(p$ev)
+  k <- length(p$amt)
+  a <- c(list(amt = .admDosePhAmt(p, i, cov, where)),
+         lapply(p$timing, .admDoseAt, j = i, k = k))
   m <- max(lengths(a))
-  rows <- lapply(seq_len(m), function(i)
-    lapply(a, function(v) v[[(i - 1L) %% length(v) + 1L]]))
+  rows <- lapply(seq_len(m), function(r) {
+    r <- lapply(a, function(v) v[[(r - 1L) %% length(v) + 1L]])
+    # `duration`: doses every ii from the start while before start + duration
+    if (!is.null(r$duration)) {
+      n <- max(1, ceiling(r$duration / r$ii - 1e-9))
+      r$addl <- n - 1
+      if (n == 1) r$ii <- NULL
+      r$duration <- NULL
+    }
+    r
+  })
   Reduce(function(ev, r) do.call(rxode2::et, c(list(ev), r)),
          rows[-1L], do.call(rxode2::et, rows[[1L]]))
 }
