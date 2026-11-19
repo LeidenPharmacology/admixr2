@@ -187,7 +187,7 @@ format.admDoseBands <- function(x, ...) {
   out <- paste(lab, collapse = "; ")
   if (length(x$timing))
     out <- paste0(out, "  (", paste(sprintf("%s = %s", names(x$timing),
-      vapply(x$timing, function(v) paste(format(v), collapse = ","),
+      vapply(x$timing, function(v) paste(format(v, trim = TRUE), collapse = ","),
              character(1))), collapse = ", "), ")")
   out
 }
