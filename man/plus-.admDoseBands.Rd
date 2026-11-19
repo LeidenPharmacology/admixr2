@@ -20,12 +20,12 @@ An \code{admDoseBands} object, to pass as \code{dose} to \code{\link[=admStudy]{
 different cut points --- every band of the result gets the doses of the
 phase band it falls in --- but must band on the same covariate. A plain
 amount or an \code{\link[rxode2:et]{rxode2::et()}} table adds a phase every band gets, e.g. a
-loading dose for everyone (an \code{et()} table needs R >= 4.3, where a class may
-claim \code{+} from \code{data.frame}; an amount works on any R).
+loading dose for everyone.
 }
 \examples{
 iv   <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
-                  per = WT, dur = 1, ii = c(24, 24, 12, 12), duration = 120)
+                  per = WT, cmt = "centr", dur = 1, ii = c(24, 24, 12, 12),
+                  duration = 120)
 oral <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(5, 5, 10, 10),
                   per = WT, cmt = "depot", ii = 24, start = 120,
                   duration = 384)

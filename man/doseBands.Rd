@@ -29,7 +29,10 @@ amount(s), e.g. \code{function(WT) 5 * WT}.}
 
 \item{...}{How each dose is given, as \code{\link[rxode2:et]{rxode2::et()}} arguments: \code{time},
 \code{cmt}, \code{ii}, \code{addl}, \code{dur}, \code{rate}, \code{ss}, \code{until}; length 1 (all bands) or
-one per band. Without them each band gets one bolus at time 0.}
+one per band. Without them each band gets one bolus at time 0. Without
+\code{cmt}, a dose goes to the model's default (first) compartment --- the
+depot in an oral model --- so give an IV dose its compartment
+(\code{cmt = "centr"}); \code{\link[=admStudy]{admStudy()}} warns about an infusion that does not.}
 
 \item{per}{Optional covariate every amount is given per unit of, bare or
 quoted: \code{per = WT} reads \code{amt = c(5, 10)} as 5 and 10 mg/kg. It must be
@@ -117,8 +120,10 @@ doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
 doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
           per = WT, dur = 1, ii = c(24, 24, 12, 12), until = 167)
 # 5 days IV, then 16 days oral: one doseBands() per phase, added
-iv   <- doseBands(CRCL, breaks = 30, amt = c(250, 500), dur = 1, ii = 24,
-                  duration = 120)
+# (name the IV compartment: without `cmt` a dose goes to the model's FIRST
+# compartment, which in an oral model is the depot)
+iv   <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "centr",
+                  dur = 1, ii = 24, duration = 120)
 oral <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "depot",
                   ii = 24, start = 120, duration = 384)
 iv + oral

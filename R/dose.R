@@ -56,7 +56,10 @@
 #'   amount(s), e.g. `function(WT) 5 * WT`.
 #' @param ... How each dose is given, as [rxode2::et()] arguments: `time`,
 #'   `cmt`, `ii`, `addl`, `dur`, `rate`, `ss`, `until`; length 1 (all bands) or
-#'   one per band. Without them each band gets one bolus at time 0.
+#'   one per band. Without them each band gets one bolus at time 0. Without
+#'   `cmt`, a dose goes to the model's default (first) compartment --- the
+#'   depot in an oral model --- so give an IV dose its compartment
+#'   (`cmt = "centr"`); [admStudy()] warns about an infusion that does not.
 #' @param per Optional covariate every amount is given per unit of, bare or
 #'   quoted: `per = WT` reads `amt = c(5, 10)` as 5 and 10 mg/kg. It must be
 #'   declared in the study's `population`. For a cap or any other formula use
@@ -93,8 +96,10 @@
 #' doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
 #'           per = WT, dur = 1, ii = c(24, 24, 12, 12), until = 167)
 #' # 5 days IV, then 16 days oral: one doseBands() per phase, added
-#' iv   <- doseBands(CRCL, breaks = 30, amt = c(250, 500), dur = 1, ii = 24,
-#'                   duration = 120)
+#' # (name the IV compartment: without `cmt` a dose goes to the model's FIRST
+#' # compartment, which in an oral model is the depot)
+#' iv   <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "centr",
+#'                   dur = 1, ii = 24, duration = 120)
 #' oral <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "depot",
 #'                   ii = 24, start = 120, duration = 384)
 #' iv + oral
@@ -234,15 +239,15 @@ doseBands <- function(covariate, breaks, amt, ..., per = NULL, start = NULL,
 #' different cut points --- every band of the result gets the doses of the
 #' phase band it falls in --- but must band on the same covariate. A plain
 #' amount or an [rxode2::et()] table adds a phase every band gets, e.g. a
-#' loading dose for everyone (an `et()` table needs R >= 4.3, where a class may
-#' claim `+` from `data.frame`; an amount works on any R).
+#' loading dose for everyone.
 #'
 #' @param e1,e2 [doseBands()] objects, or one of them an amount or an
 #'   [rxode2::et()] table.
 #' @return An `admDoseBands` object, to pass as `dose` to [admStudy()].
 #' @examples
 #' iv   <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
-#'                   per = WT, dur = 1, ii = c(24, 24, 12, 12), duration = 120)
+#'                   per = WT, cmt = "centr", dur = 1, ii = c(24, 24, 12, 12),
+#'                   duration = 120)
 #' oral <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(5, 5, 10, 10),
 #'                   per = WT, cmt = "depot", ii = 24, start = 120,
 #'                   duration = 384)
@@ -270,9 +275,11 @@ doseBands <- function(covariate, breaks, amt, ..., per = NULL, start = NULL,
             class = "admDoseBands")
 }
 
-# Registered as chooseOpsMethod.admDoseBands on R >= 4.3 (see .onLoad): our `+`
-# wins over Ops.data.frame when the other operand is an rxode2::et() table.
-.admChooseOps <- function(x, y, mx, my, cl, reverse) TRUE
+# `rxode2::et(...) + doseBands(...)`: an rxEt is also a data.frame, so R finds
+# Ops.data.frame AND +.admDoseBands and, without this, refuses both. R >= 4.3
+# (hence admixr2's Depends) lets a class claim the operator.
+#' @exportS3Method base::chooseOpsMethod
+chooseOpsMethod.admDoseBands <- function(x, y, mx, my, cl, reverse) TRUE
 
 # A phase every band gets: an amount or an event table, added to bands with `+`.
 .admDoseFixedPhase <- function(x) {
@@ -326,8 +333,35 @@ print.admDoseBands <- function(x, ...) {
 }
 
 # The dosing table as a paper prints it: one row per band and dose, columns
-# named as in rxode2::et(), "-" where a dose does not set that argument.
-.admDoseTable <- function(x) {
+# named as in rxode2::et(). An unset `time` is 0 and an unset `cmt` is the
+# model's default dosing compartment -- shown, not hidden behind a dash, since
+# that default is the first state (an oral `depot`, often) and an "IV" dose
+# without a `cmt` silently goes there. `default_cmt` names it when the model is
+# known. "-" is left only for what genuinely does not apply.
+.admDoseTable <- function(x, default_cmt = NULL) {
+  rows <- .admDoseRawRows(x)
+  ord  <- c("band", "amt", "cmt", "time", "dur", "rate", "ii", "addl", "until",
+            "duration", "ss")
+  cols <- union(c("band", "amt", "cmt"), unique(unlist(lapply(rows, names))))
+  cols <- c(intersect(ord, cols), setdiff(cols, ord))
+  dflt <- c(cmt = if (is.null(default_cmt)) "(default)"
+                  else paste0(default_cmt, " (default)"),
+            time = "0")
+  m <- do.call(rbind, lapply(rows, function(r) {
+    v <- stats::setNames(rep("-", length(cols)), cols)
+    for (cn in intersect(names(dflt), cols)) v[[cn]] <- dflt[[cn]]
+    v[names(r)] <- r
+    v
+  }))
+  df <- as.data.frame(m, stringsAsFactors = FALSE)
+  names(df)[1L] <- x$covariate
+  df
+}
+
+# Every band's doses as named character rows holding only what each dose SETS
+# (plus the band label): what the table fills in, and what the infusion check
+# reads.
+.admDoseRawRows <- function(x) {
   P <- .admDosePhases(x)
   rows <- list()
   for (j in seq_len(.admDoseNBands(x))) {
@@ -338,16 +372,56 @@ print.admDoseBands <- function(x, ...) {
       lab <- ""
     }
   }
-  ord  <- c("band", "amt", "cmt", "time", "dur", "rate", "ii", "addl", "until",
-            "duration", "ss")
-  cols <- unique(unlist(lapply(rows, names)))
-  cols <- c(intersect(ord, cols), setdiff(cols, ord))
-  m <- do.call(rbind, lapply(rows, function(r) {
-    v <- stats::setNames(rep("-", length(cols)), cols); v[names(r)] <- r; v
-  }))
-  df <- as.data.frame(m, stringsAsFactors = FALSE)
-  names(df)[1L] <- x$covariate
-  df
+  rows
+}
+
+# A model's default dosing compartment: rxode2 doses cmt = 1, the first state
+# (`depot` for an ODE or oral linCmt() model, `central` for an IV linCmt()).
+.admDefaultCmt <- function(ui)
+  tryCatch({ s <- ui$state; if (length(s)) as.character(s[[1L]]) },
+           error = function(e) NULL)
+
+# TRUE when a dose is an INFUSION (dur or rate set and non-zero) that sets no
+# `cmt`, from rows of character values or an event table's data frame.
+.admDoseInfusionNoCmt <- function(rows) {
+  any(vapply(rows, function(r) {
+    # rows are named character vectors or lists; a vector errors on a missing name
+    get <- function(cn) if (cn %in% names(r)) r[[cn]]
+    num <- function(cn) suppressWarnings(as.numeric(get(cn) %||% NA))
+    inf <- isTRUE(num("dur") != 0) || isTRUE(num("rate") != 0)
+    cm  <- get("cmt")
+    inf && (is.null(cm) || is.na(cm) || cm %in% c("", "(default)"))
+  }, logical(1)))
+}
+
+# The dose rows of an event table as named lists (dosing records only).
+.admEvRows <- function(ev) {
+  d <- as.data.frame(ev)
+  d <- d[!is.na(d$evid) & !(d$evid %in% c(0L, 2L, 3L)), , drop = FALSE]
+  lapply(seq_len(nrow(d)), function(i) lapply(d[i, , drop = FALSE], function(v)
+    if (is.factor(v)) as.character(v) else v))
+}
+
+# Warn when an infusion goes to a default compartment that is an ORAL
+# absorption compartment: an "IV" phase written without cmt = "centr" doses
+# the depot, and every number downstream still looks plausible.
+.admDoseCheckCmt <- function(dose, ui, nm, nodes = NULL) {
+  dc <- .admDefaultCmt(ui)
+  if (is.null(dc) || !grepl("^(depot|gut|abs|absorption)$", dc, ignore.case = TRUE))
+    return(invisible())
+  rows <- switch(.admDoseKind(dose),
+    ev    = .admEvRows(dose),
+    bands = .admDoseRawRows(dose),
+    fun   = if (length(nodes)) .admEvRows(.admDoseEvAt(dose, nodes[[1L]]$cov)),
+    NULL)
+  if (length(rows) && .admDoseInfusionNoCmt(rows))
+    warning("admixr2: study ", sQuote(nm), ": a dose given as an infusion ",
+            "(dur or rate) sets no `cmt`, so it goes to the model's default ",
+            "dosing compartment, ", sQuote(dc), ", which absorbs orally. An IV ",
+            "dose belongs in the central compartment: give cmt = \"",
+            setdiff(ui$state, dc)[1L] %||% "central", "\". This model's ",
+            "compartments: ", paste(ui$state, collapse = ", "), ".", call. = FALSE)
+  invisible()
 }
 
 # One phase band's doses for the table: a list of named character rows.

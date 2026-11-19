@@ -1127,7 +1127,7 @@ test_that("print() shows the dose rule", {
                                times = 1:2,
                                dose = doseBands(CRCL, 30, c(100, 200),
                                                 ii = 12, addl = 6))),
-                ">= 30 +200 +12 +6")
+                ">= 30 +200 +central \\(default\\) +12 +6")
   expect_output(print(admStudy(model = .sa_fitwt, population = pop, n = 10,
                                times = 1:2, dose = function(WT) 2 * WT)),
                 "dose = f\\(WT\\).*function\\(WT\\) 2 \\* WT")
@@ -1497,13 +1497,15 @@ test_that("phases added with + give each band both regimens", {
   expect_equal(d2$breaks, c(25, 30, 50, 70))
   expect_equal(.sa_ev(d2, 2)$amt, c(175, 100))   # 25-30: iv 2.5 x 70, oral 100
   expect_equal(.sa_ev(d2, 3)$amt, c(175, 200))   # 30-50: oral 200
-  # an amount for everyone (any R); an et() table where R lets `+` dispatch
+  # an amount or an et() table for everyone, on either side of `+`
   expect_equal(.sa_ev(100 + doseBands(CRCL, 30, c(1, 2), start = 12), 2)$amt,
                c(100, 2))
-  if (exists("chooseOpsMethod", envir = baseenv()))
-    expect_equal(.sa_ev(rxode2::et(amt = 1000, dur = 1) +
-                          doseBands(CRCL, 30, c(250, 500), start = 12), 1)$amt,
-                 c(1000, 250))
+  expect_equal(.sa_ev(rxode2::et(amt = 1000, dur = 1) +
+                        doseBands(CRCL, 30, c(250, 500), start = 12), 1)$amt,
+               c(1000, 250))
+  expect_equal(.sa_ev(doseBands(CRCL, 30, c(250, 500), start = 12) +
+                        rxode2::et(amt = 1000, dur = 1), 2)$amt,
+               c(1000, 500))
   expect_error(iv + doseBands(WT, 60, c(1, 2)), "SAME covariate")
   expect_error(iv + "a lot", "can be added")
 })
@@ -1517,17 +1519,44 @@ test_that("a dose rule prints as the dosing table", {
   expect_named(tab, c("CRCL", "amt", "cmt", "time", "dur", "ii", "duration"))
   expect_equal(tab$CRCL, c("< 30", "", ">= 30", ""))
   expect_equal(tab$amt, c("2.5 x WT", "5 x WT", "5 x WT", "10 x WT"))
-  expect_equal(tab$time, c("-", "120", "-", "120"))
+  # unset values are shown as what they are: time 0, the default compartment
+  expect_equal(tab$time, c("0", "120", "0", "120"))
+  expect_equal(tab$cmt, c("(default)", "depot", "(default)", "depot"))
+  expect_equal(admixr2:::.admDoseTable(iv, default_cmt = "depot")$cmt,
+               c("depot (default)", "depot (default)"))
   expect_output(print(iv + oral), "Dosing by CRCL band:")
   # a function band prints its arguments
   expect_equal(admixr2:::.admDoseTable(doseBands(CRCL, 30,
     list(function(WT) 5 * WT, 300)))$amt, c("f(WT)", "300"))
 })
 
+test_that("an infusion with no cmt into an oral depot warns; the table names it", {
+  st <- function(model, dose) admStudy(model = model, n = 10, times = 1:2,
+                                       population = .sa_popwc, dose = dose)
+  iv <- doseBands(CRCL, 30, c(250, 500), dur = 1)
+  w <- tryCatch(st(.sa_oral, iv), warning = conditionMessage)
+  expect_match(w, "goes to the model's default dosing compartment, .depot.")
+  expect_match(w, "cmt = \"centr\"", fixed = TRUE)
+  # the same through `+`, an et() table and a dose function
+  expect_warning(st(.sa_oral, rxode2::et(amt = 100, dur = 1)), "default dosing")
+  expect_warning(st(.sa_oral, iv + doseBands(CRCL, 30, c(1, 2), cmt = "depot",
+                                             start = 120)), "default dosing")
+  expect_warning(st(.sa_oral, function(WT) rxode2::et(amt = 2 * WT, dur = 1)),
+                 "default dosing")
+  # silent: a named compartment, a bolus (oral by default), an IV-only model
+  expect_warning(st(.sa_oral, doseBands(CRCL, 30, c(250, 500), dur = 1,
+                                        cmt = "centr")), NA)
+  expect_warning(st(.sa_oral, doseBands(CRCL, 30, c(250, 500))), NA)
+  expect_warning(st(.sa_noccr, iv), NA)            # linCmt without ka: central
+  # print() of the study resolves the default for this model
+  expect_output(print(suppressWarnings(st(.sa_oral, iv))), "depot \\(default\\)")
+  expect_output(print(st(.sa_noccr, iv)), "central \\(default\\)")
+})
+
 test_that("phases added together expand and fit-check like one doseBands()", {
   skip_if_not_installed("rxode2")
   iv   <- doseBands(CRCL, breaks = 30, amt = c(2.5, 5), per = WT, dur = 1,
-                    ii = c(24, 12), duration = 120)
+                    cmt = "centr", ii = c(24, 12), duration = 120)
   oral <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "depot",
                     ii = 24, start = 120, duration = 384)
   s <- admStudy(model = .sa_oral, population = .sa_popwc, n = 40,

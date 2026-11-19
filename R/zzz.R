@@ -91,13 +91,6 @@
     warning("admixr2: adfo registration failed (", conditionMessage(e), ")", call. = FALSE))
   tryCatch(.register_adgh(), error = function(e)
     warning("admixr2: adgh registration failed (", conditionMessage(e), ")", call. = FALSE))
-  # `rxode2::et(...) + doseBands(...)`: an rxEt is also a data.frame, so R
-  # finds Ops.data.frame AND +.admDoseBands and refuses both. R >= 4.3 lets a
-  # class claim the operator; on older R only doseBands() + an amount works.
-  if (exists("chooseOpsMethod", envir = baseenv(), inherits = FALSE))
-    tryCatch(registerS3method("chooseOpsMethod", "admDoseBands",
-                              .admChooseOps, envir = asNamespace(pkgname)),
-             error = function(e) NULL)
   # Register knit_print methods into knitr's namespace (knitr is in Suggests).
   # If knitr loads after admixr2 the setHook fires and registers then.
   tryCatch(.register_knit_print(), error = function(e) NULL)

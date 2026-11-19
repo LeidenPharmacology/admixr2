@@ -790,6 +790,9 @@ admStudy <- function(model = NULL, est = NULL,
         if (length(overlap) == 1L) "it a distribution" else "them distributions",
         ". Remove the pinned covariate from `population`; conditioning a ",
         "dependent population requires its conditional distribution.")
+  # an infusion with no `cmt` into an oral depot: plausible numbers, wrong route
+  if (!is.null(ui))
+    .admDoseCheckCmt(dose, ui, nm, .dose_strata$strata)
   structure(list(
     ui = ui, model = model,
     E = E, V = V, n = as.numeric(n), times = as.numeric(times),
@@ -813,7 +816,8 @@ print.admStudy <- function(x, ...) {
   if (inherits(x$dose, "admDoseBands")) {
     cat("  dose      by ", x$dose$covariate, " band:\n", sep = "")
     cat(paste0("            ", utils::capture.output(
-      print(.admDoseTable(x$dose), row.names = FALSE, right = FALSE))),
+      print(.admDoseTable(x$dose, .admDefaultCmt(x$ui)), row.names = FALSE,
+            right = FALSE))),
       sep = "\n")
   }
   if (is.function(x$dose))

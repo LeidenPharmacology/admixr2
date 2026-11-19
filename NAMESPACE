@@ -2,6 +2,7 @@
 
 S3method("+",admDoseBands)
 S3method(anova,admFit)
+S3method(base::chooseOpsMethod,admDoseBands)
 S3method(format,admDoseBands)
 S3method(head,admFit)
 S3method(head,paged_df)
