@@ -301,25 +301,29 @@ rbind.admDoseBands <- function(..., deparse.level = 1)
   # EVERY build -- once per node and probe point, hundreds per study. Say it
   # once here; the builds below run with that warning muffled.
   if (how == "seq") {
-    # build band 1's parts, then call etSeq() here directly: the builds
-    # themselves muffle its warning, so this is the one place it can be heard
+    # build each band's parts, then call etSeq() here directly: the builds
+    # themselves muffle its warning, so this is the one place it can be heard.
+    # EVERY band, since whether a phase sets `ii` can differ band to band.
     gap <- FALSE
-    lo  <- .admDoseLo(d, 1L)
-    evs <- tryCatch(lapply(parts, .admDoseNodeEv, lo = lo, cov = NULL,
-                           where = function() .admDoseBandWhere(d, 1L),
-                           labels = .admDoseLabels()),
-                    error = function(e) NULL)
-    if (length(evs) > 1L)
-      withCallingHandlers(
-        tryCatch(do.call(rxode2::etSeq, evs), error = function(e) NULL),
-        warning = function(w) if (grepl(.ADM_ETSEQ_NOII, conditionMessage(w))) {
-          gap <<- TRUE; invokeRestart("muffleWarning")
-        })
+    for (j in seq_len(.admDoseNBands(d))) {
+      evs <- tryCatch(lapply(parts, .admDoseNodeEv, lo = .admDoseLo(d, j),
+                             cov = NULL,
+                             where = function() .admDoseBandWhere(d, j),
+                             labels = .admDoseLabels()),
+                      error = function(e) NULL)
+      if (length(evs) > 1L)
+        withCallingHandlers(
+          tryCatch(do.call(rxode2::etSeq, evs), error = function(e) NULL),
+          warning = function(w) if (grepl(.ADM_ETSEQ_NOII, conditionMessage(w))) {
+            gap <<- TRUE; invokeRestart("muffleWarning")
+          })
+      if (gap) break
+    }
     if (gap)
-      warning("admixr2: none of these phases sets a dosing interval (`ii`), so ",
-              "rxode2::etSeq() starts each phase 24 h after the previous one's ",
-              "last dose. Give `ii`, or a wait in hours between the phases, ",
-              "e.g. c(a, 12, b).", call. = FALSE)
+      warning("admixr2: in at least one band none of these phases sets a dosing ",
+              "interval (`ii`), so rxode2::etSeq() starts each phase 24 h after ",
+              "the previous one's last dose. Give `ii`, or a wait in hours ",
+              "between the phases, e.g. c(a, 12, b).", call. = FALSE)
   }
   d
 }
@@ -388,7 +392,11 @@ print.admDoseBands <- function(x, ...) {
     return(invisible(x))
   }
   cat("Dosing by ", x[["covariate"]], " band:\n", sep = "")
-  print(.admDoseTable(x), row.names = FALSE, right = FALSE)
+  tab <- .admDoseTable(x)
+  print(tab, row.names = FALSE, right = FALSE)
+  if (any(tab == "?"))
+    cat("? : set by that band's function, which returns its own et(); print()",
+        "of the study shows it at the population's medians\n")
   invisible(x)
 }
 
@@ -400,11 +408,13 @@ print.admDoseBands <- function(x, ...) {
 # rule ("5 x WT", "f(WT)"). An unset `cmt` is the model's default dosing
 # compartment, named when `default_cmt` is known, and an "IV" dose without one
 # goes to an oral depot, so it is shown rather than left blank.
-.admDoseTable <- function(x, default_cmt = NULL) {
+.admDoseTable <- function(x, default_cmt = NULL, cov = NULL) {
   dflt <- if (is.null(default_cmt)) "(default)" else paste0(default_cmt, " (default)")
+  built_at <- FALSE
   bands <- lapply(seq_len(.admDoseNBands(x)), function(j) {
     lab <- .admDoseLabels()
-    d   <- as.data.frame(.admDoseBandEv(x, j, labels = lab))
+    d   <- as.data.frame(.admDoseBandEv(x, j, cov = cov, labels = lab))
+    built_at <<- built_at || lab$at
     d$id <- NULL
     if (!is.null(d$evid) && all(d$evid %in% 1L)) d$evid <- NULL
     a  <- suppressWarnings(as.numeric(d[["amt"]]))
@@ -412,7 +422,7 @@ print.admDoseBands <- function(x, ...) {
     # element by element: a column formatted whole takes the stand-ins' width
     # and scientific notation (1000 printed as 1e+03)
     out <- lapply(d, function(v) {
-      s <- vapply(seq_along(v), function(r) format(v[r], trim = TRUE), "")
+      s <- vapply(seq_along(v), function(r) format(v[r], trim = TRUE, digits = 4), "")
       s[is.na(v) | s == "NA"] <- "-"
       s
     })
@@ -428,6 +438,10 @@ print.admDoseBands <- function(x, ...) {
         out <- out[append(setdiff(names(out), "cmt"), "cmt", after = at)]
     }
     out$cmt[out$cmt %in% c("(default)", "-")] <- dflt
+    # a function returning its own et(): nothing but its rule is known here
+    wh <- tg
+    wh[tg] <- lab$whole[a[tg] - .ADM_DOSE_TAG]
+    for (cn in setdiff(names(out), "amt")) out[[cn]][wh] <- "?"
     band <- rep("", nrow(d))
     band[1L] <- sub(paste0("^", x[["covariate"]], " "), "", .admDoseBandWhere(x, j))
     as.data.frame(c(list(band = band), out), stringsAsFactors = FALSE,
@@ -439,12 +453,27 @@ print.admDoseBands <- function(x, ...) {
     b[cols]
   }))
   names(df)[1L] <- x[["covariate"]]
+  # TRUE when a band was a function returning et(), built at `cov`
+  attr(df, "built_at") <- built_at
   df
 }
 
-# Stand-in amounts for the table: a value above .ADM_DOSE_TAG indexes `lab`.
+# Stand-in amounts for the table: a value above .ADM_DOSE_TAG indexes `lab`;
+# `whole` marks a function returning its own et(), whose timing is unknown
+# until it is called; `at` records that one was built at given covariates.
 .ADM_DOSE_TAG <- 1e15
-.admDoseLabels <- function() { e <- new.env(parent = emptyenv()); e$lab <- character(0); e }
+.admDoseLabels <- function() {
+  e <- new.env(parent = emptyenv())
+  e$lab <- character(0); e$whole <- logical(0); e$at <- FALSE
+  e
+}
+
+# Whether a band's function returns a whole et() table: called once with every
+# argument at 1, which only reads the class. NA when it cannot be called there.
+.admDoseFunIsEt <- function(f)
+  tryCatch(inherits(suppressWarnings(do.call(f, stats::setNames(
+    rep(list(1), length(formals(f))), names(formals(f))))), "rxEt"),
+    error = function(e) NA)
 
 # A model's default dosing compartment: rxode2 doses cmt = 1, the first state
 # (`depot` for an ODE or oral linCmt() model, `central` for an IV linCmt()).
@@ -476,11 +505,7 @@ print.admDoseBands <- function(x, ...) {
 .admDoseCheckCmt <- function(dose, ui, nm, population = NULL) {
   dc <- .admDefaultCmt(ui)
   if (is.null(dc) || !identical(tolower(dc), "depot")) return(invisible())
-  covs <- .admDoseCovs(dose)
-  med <- if (length(covs) && !is.null(population)) {
-    cd <- .admCovDistCanon(population)
-    stats::setNames(lapply(covs, function(v) .admCovQuantile(cd[[v]], 0.5)), covs)
-  }
+  med <- .admDoseMedians(dose, population)
   # each band on its own: one band that cannot be built at the medians must not
   # switch the check off for all the others
   quiet <- function(expr) tryCatch(expr, error = function(e) NULL)
@@ -497,9 +522,11 @@ print.admDoseBands <- function(x, ...) {
                         else { v <- suppressWarnings(as.numeric(d[[cn]])); v[is.na(v)] <- 0; v }
     cm  <- if (is.null(d[["cmt"]])) rep("(default)", nrow(d)) else as.character(d[["cmt"]])
     # unset, or the default by NUMBER (cmt = 1): the depot without saying so.
-    # A dose that NAMES the depot is a choice (zero-order absorption), not a slip.
+    # A dose that NAMES the depot is a choice (zero-order absorption), not a
+    # slip, and so is rate/dur = -1/-2, which hands the rate or duration to
+    # the model's own rate(depot)/dur(depot): only a POSITIVE one is an infusion.
     dflt <- is.na(cm) | cm %in% c("(default)", "1")
-    any((num("dur") != 0 | num("rate") != 0) & dflt)
+    any((num("dur") > 0 | num("rate") > 0) & dflt)
   }, logical(1)))
   if (inf) {
     oth <- setdiff(ui$state, dc)
@@ -515,6 +542,16 @@ print.admDoseBands <- function(x, ...) {
                         "route for an IV dose."), call. = FALSE)
   }
   invisible()
+}
+
+# The population's median of every covariate a dose rule reads, as a named
+# list: where a rule is shown or checked at one representative patient.
+.admDoseMedians <- function(dose, population) {
+  covs <- .admDoseCovs(dose)
+  if (!length(covs) || is.null(population)) return(NULL)
+  cd <- .admCovDistCanon(population)
+  covs <- intersect(covs, .admCovSpecNames(cd))
+  stats::setNames(lapply(covs, function(v) .admCovQuantile(cd[[v]], 0.5)), covs)
 }
 
 # What kind of dose rule `dose` is: a fixed amount, a full event table, a
@@ -607,16 +644,30 @@ print.admDoseBands <- function(x, ...) {
   if (inherits(a, "rxEt")) return(.admDoseEvChecked(a, where))
   tim <- lapply(p[["timing"]], .admDoseAt, j = i, k = k)
   if (!is.null(labels)) {
-    lab <- if (is.function(a)) {
-      f <- paste0("f(", paste(names(formals(a)), collapse = ", "), ")")
-      m <- max(c(1L, lengths(tim)))
-      if (m > 1L) paste0(f, " [", seq_len(m), "]") else f
+    whole <- FALSE
+    if (is.function(a)) {
+      f  <- paste0("f(", paste(names(formals(a)), collapse = ", "), ")")
+      # a function that returns a WHOLE et() table carries its own timing, which
+      # a stand-in cannot show: build it for real where the covariate values
+      # are known (print() of a study passes the medians), and otherwise say
+      # what it is rather than print one bolus at time 0 that it is not
+      if (!length(tim) && isTRUE(.admDoseFunIsEt(a))) {
+        if (!is.null(cov) && all(names(formals(a)) %in% names(cov))) {
+          labels$at <- TRUE
+          return(.admDoseEvChecked(.admDoseLeafAmt(p, i, cov, where), where))
+        }
+        lab <- paste(f, "-> et()"); whole <- TRUE
+      } else {
+        m   <- max(c(1L, lengths(tim)))
+        lab <- if (m > 1L) paste0(f, " [", seq_len(m), "]") else f
+      }
     } else {
-      s <- vapply(a, format, "")
-      if (!is.null(p[["per"]])) paste(s, "x", p[["per"]]) else s
+      s   <- vapply(a, format, "")
+      lab <- if (!is.null(p[["per"]])) paste(s, "x", p[["per"]]) else s
     }
     amt <- .ADM_DOSE_TAG + length(labels$lab) + seq_along(lab)
-    labels$lab <- c(labels$lab, lab)
+    labels$lab   <- c(labels$lab, lab)
+    labels$whole <- c(labels$whole, rep(whole, length(lab)))
     return(.admDoseEvChecked(.admDoseChain(c(list(amt = amt), tim)), where))
   }
   amt <- .admDoseLeafAmt(p, i, cov, where)
@@ -739,6 +790,44 @@ print.admDoseBands <- function(x, ...) {
   rng <- sort(as.numeric(rng %||% c(-Inf, Inf)))
   lo  <- max(bt$lo[j], rng[1L]); hi <- min(bt$hi[j], rng[2L])
   if (lo >= hi) NULL else c(lo, hi)
+}
+
+# Each band's SHARE of the enrolled patients when an enrolled range on another
+# covariate is latently correlated with the banded one. The band's mass is then
+# P(banded covariate in band, other in its range), not P(banded in band): with
+# WT enrolled at 40-70 kg and rho = 0.6, CrCl < 30 holds 27.5% of the enrolled
+# patients against 12.9% of the population. On the latent scale that is
+#   int_band phi(z) [Phi((b2 - rho z) / s) - Phi((b1 - rho z) / s)] dz,
+# s = sqrt(1 - rho^2) -- one-dimensional quadrature. NULL when no such range
+# exists, and the caller keeps the banded covariate's own shares, bit for bit.
+.admDoseBandShares <- function(cd, bcv, spans, cov_range) {
+  nms <- .admCovSpecNames(cd); R <- cd[["latentR"]]
+  oth <- setdiff(intersect(names(cov_range), nms), bcv)
+  oth <- oth[vapply(oth, function(v) is.null(cd[[v]][["values"]]), logical(1))]
+  if (is.null(R) || !length(oth)) return(NULL)
+  ia <- match(bcv, nms)
+  cp <- oth[abs(R[ia, match(oth, nms)]) > 1e-12]
+  if (!length(cp)) return(NULL)
+  if (length(cp) > 1L)
+    stop("admixr2: the bands on ", sQuote(bcv), " are correlated with the ",
+         "enrolled ranges of ", paste(sQuote(cp), collapse = " and "),
+         "; admixr2 splits the patients exactly over one such range at most. ",
+         "Drop a `range` that does not restrict enrolment.", call. = FALSE)
+  rho <- R[ia, match(cp, nms)]; s <- sqrt(1 - rho^2)
+  zb  <- stats::qnorm(.admCovCdfOf(cd[[cp]])(sort(as.numeric(cov_range[[cp]]))))
+  Fa  <- .admCovCdfOf(cd[[bcv]])
+  mass <- vapply(spans, function(sp) {
+    za <- stats::qnorm(Fa(sp))
+    stats::integrate(function(z) stats::dnorm(z) *
+                       (stats::pnorm((zb[2L] - rho * z) / s) -
+                        stats::pnorm((zb[1L] - rho * z) / s)),
+                     za[1L], za[2L], rel.tol = 1e-10)$value
+  }, numeric(1))
+  if (!(sum(mass) > 0))
+    stop("admixr2: the bands on ", sQuote(bcv), " and the enrolled range of ",
+         sQuote(cp), " leave no patients under the declared correlation.",
+         call. = FALSE)
+  mass / sum(mass)
 }
 
 # The covariates band j's nodes are cut over, given the canonical population
@@ -999,8 +1088,21 @@ print.admDoseBands <- function(x, ...) {
   sl <- (cs[i + 1L] - cs[i - w + 1L]) / w           # mean slope over s[(i-w+1):i]
   sr <- (cs[i + w + 1L] - cs[i + 1L]) / w           # mean slope over s[(i+1):(i+w)]
   ds <- abs(sr - sl); m <- max(abs(c(sl, sr)))
-  if (m > 0 && max(ds) > 0.25 * m)
-    return(list(kind = "kink", at = x[i[which.max(ds)] + 1L]))
+  if (!(m > 0)) return(NULL)
+  # a kink is a change CONCENTRATED at one point: big against the slope, and
+  # big against the change two windows either side. A saturating curve,
+  # 100 * x / (x + 10), changes its slope a lot near its foot but gradually,
+  # so it fails the second test; a cap, pmin(15 * x, 900), passes both.
+  L  <- length(ds); off <- 2L * w
+  nb <- vapply(seq_len(L), function(k) {
+    v <- c(if (k - off >= 1L) ds[k - off], if (k + off <= L) ds[k + off])
+    if (length(v)) max(v) else NA_real_
+  }, numeric(1))
+  ok <- ds > 0.25 * m & !is.na(nb) & ds > 3 * nb
+  if (any(ok)) {
+    k <- which(ok)[which.max(ds[ok])]
+    return(list(kind = "kink", at = x[i[k] + 1L]))
+  }
   NULL
 }
 
@@ -1019,9 +1121,17 @@ print.admDoseBands <- function(x, ...) {
                     "dose = doseBands(", hit$covariate, ", breaks = ", at,
                     ", amt = ...), with `per = <covariate>` for a mg/kg dose or ",
                     "a function per band for any other formula.")
-           else paste0("Add a cut point there: doseBands(", band_of,
-                       ", breaks = c(..., ", at, ", ...), ...), giving each side ",
-                       "its own amount, or band on ", hit$covariate, " instead."))
+           else if (identical(hit$covariate, band_of))
+             paste0("Add a cut point there: doseBands(", band_of,
+                    ", breaks = c(..., ", at, ", ...), ...), giving each side ",
+                    "its own amount.")
+           # a step in ANOTHER covariate cannot become a cut on this one: the
+           # bands split exactly on one covariate only
+           else paste0("doseBands() splits exactly on ", band_of, " only, so a step ",
+                       "in ", hit$covariate, " inside a band stays approximate; if ",
+                       "the rule's main step is in ", hit$covariate, ", band on ",
+                       hit$covariate, " instead and put the ", band_of,
+                       " dependence into each band's function."))
   else
     paste0("admixr2: ", what, " is not smooth: it bends sharply where ",
            hit$covariate, " is about ", at, " (a cap?). Doses are evaluated at ",

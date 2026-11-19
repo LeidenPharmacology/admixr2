@@ -1724,6 +1724,85 @@ test_that("every kind of dose object declares every field", {
   expect_named(c(b, rxode2::et(amt = 1))[["parts"]][[2L]], f)
 })
 
+# -- PR #169 second review ------------------------------------------------------
+
+test_that("bands split n over a correlated covariate's enrolled range", {
+  skip_if_not_installed("rxode2")
+  # CrCl < 30 is 12.9% of the population but 27.4% of those enrolled at
+  # WT 40-70 when WT and CRCL correlate at 0.6
+  X <- covDraw(admixr2:::.admCovDistCanon(.sa_popwc), n = 400000L)
+  ref <- mean(X[X[, "WT"] >= 40 & X[, "WT"] <= 70, "CRCL"] < 30)
+  for (dose in list(doseBands(CRCL, 30, c(250, 500)),
+                    doseBands(CRCL, 30, c(5, 10), per = WT))) {
+    s <- admStudy(model = .sa_noccr, population = .sa_popwc, n = 100,
+                  times = c(1, 4), range = list(WT = c(40, 70)), strata_nodes = 3L,
+                  dose = dose)
+    m  <- admixr2:::.admMaterialise(admStudies(s = s))
+    nn <- vapply(m, function(x) x$n, 0)
+    expect_equal(sum(nn), 100, tolerance = 1e-8)
+    expect_equal(sum(nn[grepl("_CRCLb1", names(m))]) / 100, ref, tolerance = 0.01)
+  }
+  # without a correlated range the shares are the banded covariate's own
+  pop0 <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 50, sd = 20))
+  expect_null(admixr2:::.admDoseBandShares(admixr2:::.admCovDistCanon(pop0), "CRCL",
+                list(c(-Inf, 30), c(30, Inf)), list(WT = c(40, 70))))
+})
+
+test_that("a step in another covariate is not advised as a cut on the banded one", {
+  w <- tryCatch(admStudy(model = .sa_noccr, n = 10, times = 1:2, population = .sa_popwc,
+                         dose = doseBands(CRCL, 30, amt = list(
+                           function(WT) ifelse(WT < 70, 250, 500), 600))),
+                warning = conditionMessage)
+  expect_match(w, "jumps where WT is about 70")
+  expect_false(grepl("doseBands(CRCL, breaks", w, fixed = TRUE))
+  expect_match(w, "splits exactly on CRCL only")
+})
+
+test_that("the 24-h etSeq() notice looks at every band", {
+  expect_warning(c(doseBands(CRCL, 30, amt = list(rxode2::et(amt = 250, ii = 24, addl = 3),
+                                                  rxode2::et(amt = 500))),
+                   doseBands(CRCL, 30, amt = c(250, 500))),
+                 "in at least one band")
+})
+
+test_that("a band function returning et() is shown for what it is", {
+  fb <- doseBands(CRCL, 30, amt = list(
+    function(WT) rxode2::et(amt = 5 * WT, ii = 12, addl = 3), function(WT) 10 * WT))
+  tab <- admixr2:::.admDoseTable(fb)
+  expect_equal(tab$amt[1], "f(WT) -> et()")
+  expect_equal(tab$time[1], "?")
+  expect_output(print(fb), "\\? : set by that band's function")
+  # at known covariates it is built for real, with its own timing
+  tab2 <- admixr2:::.admDoseTable(fb, cov = list(WT = 70, CRCL = 50))
+  expect_equal(tab2$amt[1], "350")
+  expect_equal(tab2$ii[1], "12")
+  expect_true(attr(tab2, "built_at"))
+  skip_if_not_installed("rxode2")
+  expect_output(print(admStudy(model = .sa_noccr, n = 10, times = 1:2,
+                               population = .sa_popwc, dose = fb)),
+                "shown at .*the population medians")
+})
+
+test_that("a saturating dose is smooth; a cap and a change of mg/kg are not", {
+  x <- seq(15, 110, length.out = 101)
+  along <- admixr2:::.admDoseRoughAlong
+  expect_null(along(x, 100 * x / (x + 10)))
+  expect_null(along(x, x^3))
+  expect_identical(along(x, pmin(15 * x, 900))$kind, "kink")
+  expect_identical(along(x, ifelse(x < 60, 2 * x, 120 + (x - 60)))$kind, "kink")
+  expect_warning(admStudy(model = .sa_noccr, n = 10, times = 1:2, population = .sa_popwc,
+                          dose = function(CRCL) 100 * CRCL / (CRCL + 10)), NA)
+})
+
+test_that("a modelled rate or duration into the depot is not an IV slip", {
+  ui <- suppressMessages(rxode2::rxode2(.sa_oral))
+  for (v in list(list(dur = -2), list(rate = -1), list(rate = -2)))
+    expect_warning(admixr2:::.admDoseCheckCmt(do.call(rxode2::et, c(list(amt = 100), v)),
+                                              ui, "s"), NA)
+  expect_warning(admixr2:::.admDoseCheckCmt(rxode2::et(amt = 100, rate = 50), ui, "s"),
+                 "default dosing")
+})
+
 test_that(".admDoseRoughAlong tells a step from a kink from a smooth curve", {
   x <- seq(10, 100, length.out = 101)
   along <- admixr2:::.admDoseRoughAlong

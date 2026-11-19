@@ -819,10 +819,16 @@ print.admStudy <- function(x, ...) {
               format(x$n), dz, length(x$times), min(x$times), max(x$times)))
   if (inherits(x$dose, "admDoseBands")) {
     cat("  dose      by ", x$dose[["covariate"]], " band:\n", sep = "")
+    # a band whose function returns its own et() is built at the medians
+    .med <- tryCatch(.admDoseMedians(x$dose, x$population), error = function(e) NULL)
+    .tab <- .admDoseTable(x$dose, .admDefaultCmt(x$ui), cov = .med)
     cat(paste0("            ", utils::capture.output(
-      print(.admDoseTable(x$dose, .admDefaultCmt(x$ui)), row.names = FALSE,
-            right = FALSE))),
-      sep = "\n")
+      print(.tab, row.names = FALSE, right = FALSE))), sep = "\n")
+    if (isTRUE(attr(.tab, "built_at")))
+      cat("            (a band given as a function returning et() is shown at ",
+          paste(sprintf("%s = %s", names(.med), vapply(.med, function(v)
+            format(signif(v, 3)), "")), collapse = ", "),
+          ", the population medians)\n", sep = "")
   }
   if (is.function(x$dose))
     cat("  dose      function(", paste(.admDoseCovs(x$dose), collapse = ", "),
@@ -1220,11 +1226,19 @@ print() a single study to check its transcription.
                           else union(spk$stratify, .bcv)
         spk
       }
+      # each band's share of n: the banded covariate's own, unless an enrolled
+      # range on a covariate correlated with it moves patients between bands
+      .spans <- lapply(seq_len(nrow(.bbd)), function(k)
+        .admDoseBandSpan(s$dose, k, .brng))
+      .in    <- !vapply(.spans, is.null, logical(1))
+      .shr   <- .admDoseBandShares(.bcd, .bcv, .spans[.in], sp$cov_range)
+      if (!is.null(.shr)) { .sh <- numeric(length(.spans)); .sh[.in] <- .shr }
       for (k in seq_len(nrow(.bbd))) {
-        .span <- .admDoseBandSpan(s$dose, k, .brng)
+        .span <- .spans[[k]]
         if (is.null(.span)) next          # band outside the enrolled span
         spb <- sp
-        spb$n <- s$n * diff(.bcdf(.span)) / .pR
+        spb$n <- if (is.null(.shr)) s$n * diff(.bcdf(.span)) / .pR
+                 else s$n * .sh[[k]]
         spb$cov_range <- utils::modifyList(as.list(sp$cov_range %||% list()),
                                            stats::setNames(list(.span), .bcv))
         # A band whose AMOUNT reads a covariate (`per = WT`, a function) is cut
