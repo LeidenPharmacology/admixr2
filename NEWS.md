@@ -23,6 +23,8 @@
 
 * **A dose function of correlated covariates with a `range` now conditions the
   others on it**: weight nodes averaged 75 kg instead of 67.6 kg for CrCl 15–40.
+* **Stratifying on correlated covariates with a `range` now conditions on it too**,
+  including the projected design, whose spread was 6% too wide along the model.
 
 # admixr2 0.4.2
 

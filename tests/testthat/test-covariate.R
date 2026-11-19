@@ -2130,6 +2130,37 @@ test_that("a truncated margin is cut on the span, by recombination", {
   expect_true(all(wt >= 55 & wt <= 105))
 })
 
+test_that("the truncated cloud is drawn from the box-truncated law", {
+  # Rotating a grid by chol(R) and reading each truncated margin through its
+  # own uniform put the correlation INSIDE the bands: along a model direction
+  # the spread came out 6% too wide, and a correlated partner never felt the
+  # range. The atoms now come from the correlated normal truncated to the box.
+  pop <- .pnd_pop()
+  rng <- list(WT = c(55, 105), CRCL = c(60, 130), ALB = c(31, 49))
+  cd  <- admixr2:::.admCovApplyRange(admixr2:::.admCovDistCanon(pop), rng)
+  cn  <- c("WT", "CRCL", "ALB")
+  R   <- admixr2:::.admCovDistCanon(pop)$latentR
+  dimnames(R) <- rep(list(admixr2:::.admCovSpecNames(admixr2:::.admCovDistCanon(pop))), 2L)
+  cl  <- admixr2:::.admCovCloud(cd, cn, R[cn, cn], diag(3L), 15L)
+  X   <- covDraw(admixr2:::.admCovDistCanon(pop), n = 400000L)
+  s   <- rep(TRUE, nrow(X))
+  for (v in cn) s <- s & X[, v] >= rng[[v]][1L] & X[, v] <= rng[[v]][2L]
+  LX  <- log(X[s, cn])
+  mu  <- colSums(cl$su * cl$w)
+  sdv <- sqrt(colSums(sweep(cl$su, 2L, mu)^2 * cl$w))
+  expect_equal(sum(cl$w), 1, tolerance = 1e-12)
+  expect_equal(mu, colMeans(LX), tolerance = 2e-4, ignore_attr = TRUE)
+  expect_equal(sdv, apply(LX, 2L, stats::sd), tolerance = 0.01, ignore_attr = TRUE)
+  # the WT-CRCL dependence survives inside the box
+  r12 <- sum(cl$w * (cl$su[, 1] - mu[1]) * (cl$su[, 2] - mu[2])) / (sdv[1] * sdv[2])
+  expect_equal(r12, stats::cor(LX[, 1], LX[, 2]), tolerance = 0.02)
+  # untruncated, the old construction is kept bit for bit
+  cd0 <- admixr2:::.admCovDistCanon(pop)
+  g0  <- admixr2:::.adghNodeGrid(5L, 3L)
+  z0  <- g0$X %*% chol(R[cn, cn])
+  expect_identical(admixr2:::.admCovCloud(cd0, cn, R[cn, cn], diag(3L), 5L)$z, z0)
+})
+
 test_that("the projected design crosses the exact discrete enumeration", {
   skip_on_cran(); skip_if_not_installed("rxode2")
   # A discrete margin is enumerated, not projected -- it is latently independent

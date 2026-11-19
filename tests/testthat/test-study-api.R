@@ -1630,7 +1630,7 @@ test_that("two ranged dosing covariates are conditioned on the whole rectangle",
   X <- covDraw(admixr2:::.admCovDistCanon(.sa_popwc), n = 400000L)
   for (cr in list(list(CRCL = c(15, 40), WT = c(60, 100)),
                   list(CRCL = c(-Inf, 30), WT = c(40, 80)))) {
-    st <- admixr2:::.admDoseStrata(.sa_popwc, c("CRCL", "WT"), 7L, cr)
+    st <- admixr2:::.admCovStrata(.sa_popwc, c("CRCL", "WT"), 7L, warn_range = FALSE, cov_range = cr)
     w  <- vapply(st, function(z) z$weight, 0)
     xy <- cbind(WT = vapply(st, function(z) z$cov$WT, 0),
                 CRCL = vapply(st, function(z) z$cov$CRCL, 0))
@@ -1657,13 +1657,61 @@ test_that("two ranged dosing covariates are conditioned on the whole rectangle",
                mean(X[sel & X[, "CRCL"] >= 30, "WT"]), tolerance = 0.003)
 })
 
-test_that("more than two ranged, correlated dosing covariates is refused", {
+test_that("three ranged, correlated covariates are conditioned on the whole box", {
   pop3 <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 50, sd = 20),
                         AGE = c(mean = 60, sd = 12),
-                        cor = c(WT.CRCL = 0.6, WT.AGE = 0.3))
-  expect_error(admixr2:::.admDoseStrata(pop3, c("CRCL", "WT", "AGE"), 3L,
-                 list(CRCL = c(-Inf, 30), WT = c(40, 80), AGE = c(30, 80))),
-               "two at most")
+                        cor = c(WT.CRCL = 0.6, WT.AGE = 0.3, CRCL.AGE = -0.4))
+  X  <- covDraw(admixr2:::.admCovDistCanon(pop3), n = 400000L)
+  cr <- list(CRCL = c(-Inf, 30), WT = c(40, 80), AGE = c(30, 80))
+  st <- admixr2:::.admCovStrata(pop3, c("CRCL", "WT", "AGE"), 7L,
+                                warn_range = FALSE, cov_range = cr)
+  w  <- vapply(st, function(z) z$weight, 0)
+  M  <- t(vapply(st, function(z) unlist(z$cov[c("WT", "CRCL", "AGE")]), numeric(3)))
+  s  <- X[, "CRCL"] <= 30 & X[, "WT"] >= 40 & X[, "WT"] <= 80 &
+        X[, "AGE"] >= 30 & X[, "AGE"] <= 80
+  expect_equal(sum(w), 1, tolerance = 1e-10)
+  expect_equal(colSums(M * w), colMeans(X[s, c("WT", "CRCL", "AGE")]),
+               tolerance = 0.003, ignore_attr = TRUE)
+})
+
+test_that("plain stratify conditions on a correlated covariate's range", {
+  skip_if_not_installed("rxode2")
+  # the source model estimates both coefficients, so both are stratified;
+  # with CRCL enrolled at 15-40 the WT strata sat at the population's 75 kg
+  mod <- function() {
+    ini({ tcl <- log(5); bwt <- 0.75; bcr <- 0.5; tv <- log(50)
+          eta.cl ~ 0.09; add.err <- 0.1 })
+    model({ cl <- exp(tcl + bwt * log(WT / 70) + bcr * log(CRCL / 50) + eta.cl)
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  s <- admStudy(model = mod, n = 100, times = c(1, 4, 12), population = .sa_popwc,
+                range = list(CRCL = c(15, 40)), dose = 100, strata_nodes = 5L)
+  m  <- suppressWarnings(admixr2:::.admMaterialise(admStudies(s = s)))
+  nn <- vapply(m, function(x) x$n, 0)
+  X  <- covDraw(admixr2:::.admCovDistCanon(.sa_popwc), n = 400000L)
+  X  <- X[X[, "CRCL"] >= 15 & X[, "CRCL"] <= 40, ]
+  expect_equal(sum(nn * vapply(m, function(x) x$cov$WT, 0)) / sum(nn),
+               mean(X[, "WT"]), tolerance = 0.003)
+  # a range on an uncorrelated pair keeps the joint grid, unchanged
+  pop0 <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 50, sd = 20))
+  expect_null(admixr2:::.admCovStrataSeq(admixr2:::.admCovDistCanon(pop0),
+                c("CRCL", "WT"), 5L, 32768L, list(CRCL = c(15, 40))))
+})
+
+test_that("bands split n over two correlated enrolled ranges", {
+  skip_if_not_installed("rxode2")
+  pop3 <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 50, sd = 20),
+                        AGE = c(mean = 60, sd = 12),
+                        cor = c(WT.CRCL = 0.6, CRCL.AGE = -0.4))
+  X <- covDraw(admixr2:::.admCovDistCanon(pop3), n = 400000L)
+  sel <- X[, "WT"] >= 40 & X[, "WT"] <= 70 & X[, "AGE"] >= 60
+  s <- admStudy(model = .sa_noccr, population = pop3, n = 100, times = c(1, 4),
+                range = list(WT = c(40, 70), AGE = c(60, 120)), strata_nodes = 3L,
+                dose = doseBands(CRCL, 30, c(250, 500)))
+  m  <- suppressWarnings(admixr2:::.admMaterialise(admStudies(s = s)))
+  nn <- vapply(m, function(x) x$n, 0)
+  expect_equal(sum(nn[grepl("_CRCLb1", names(m))]) / sum(nn),
+               mean(X[sel, "CRCL"] < 30), tolerance = 0.01)
 })
 
 test_that("an et() phase is checked like a band's", {

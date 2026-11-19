@@ -808,14 +808,24 @@ print.admDoseBands <- function(x, ...) {
   ia <- match(bcv, nms)
   cp <- oth[abs(R[ia, match(oth, nms)]) > 1e-12]
   if (!length(cp)) return(NULL)
-  if (length(cp) > 1L)
-    stop("admixr2: the bands on ", sQuote(bcv), " are correlated with the ",
-         "enrolled ranges of ", paste(sQuote(cp), collapse = " and "),
-         "; admixr2 splits the patients exactly over one such range at most. ",
-         "Drop a `range` that does not restrict enrolment.", call. = FALSE)
+  Fa <- .admCovCdfOf(cd[[bcv]])
+  if (length(cp) > 1L) {
+    # several correlated ranges: P(band) x P(all of them | band), the second
+    # from the sequential conditioner's UNNORMALISED weights (the band covariate
+    # first), whose total is exactly that conditional probability
+    mass <- vapply(spans, function(sp) {
+      cr  <- c(stats::setNames(list(sp), bcv), cov_range[cp])
+      res <- .admCovSeqCore(cd, c(bcv, cp), .ADM_STRATA_NODES, 32768L, cr)
+      diff(Fa(sp)) * sum(vapply(res$nodes, function(z) z$weight, numeric(1)))
+    }, numeric(1))
+    if (!(sum(mass) > 0))
+      stop("admixr2: the bands on ", sQuote(bcv), " and the enrolled ranges of ",
+           paste(sQuote(cp), collapse = " and "), " leave no patients under the ",
+           "declared correlation.", call. = FALSE)
+    return(mass / sum(mass))
+  }
   rho <- R[ia, match(cp, nms)]; s <- sqrt(1 - rho^2)
   zb  <- stats::qnorm(.admCovCdfOf(cd[[cp]])(sort(as.numeric(cov_range[[cp]]))))
-  Fa  <- .admCovCdfOf(cd[[bcv]])
   mass <- vapply(spans, function(sp) {
     za <- stats::qnorm(Fa(sp))
     stats::integrate(function(z) stats::dnorm(z) *
@@ -844,103 +854,6 @@ print.admDoseBands <- function(x, ...) {
   corr <- !is.null(R) && length(oth) &&
     any(abs(R[match(bcv, nms), oth]) > 1e-12)
   unique(c(if (bcv %in% acv || corr) bcv, acv))
-}
-
-# Nodes over the dosing covariates S, inside `cov_range`, as .admCovStrata()
-# returns them -- but CONDITIONED SEQUENTIALLY when a range-truncated covariate
-# is latently correlated with another one in S.
-#
-# .admCovStrata() lays a joint grid over S rotated by chol(R_SS), and a
-# truncated margin enters it through its OWN uniform, so the correlation acts on
-# the band's score, not on the full-margin latent the copula couples through:
-# with CRCL < 30 and rho = 0.6, the WT nodes came out at E[WT] = 75 in both
-# bands against 63.9 / 76.6 from the full law. The marginalised block maps
-# through `.band` and is exact, so cut the truncated covariate FIRST (the rest
-# conditioned exactly on each node), then cut the rest from each node's
-# conditional law (the incoming latentMu/latentScale path). A product of exact
-# conditional rules is a rule for the joint law. Otherwise the joint grid is
-# kept, so every design that was right stays bit-identical.
-#
-# A RANGE ON THE REST TOO (a band on CRCL and an enrolled WT range, the usual
-# case with per = WT) makes the target a normal truncated to a RECTANGLE in
-# latent space. Cutting `first` from its own truncated margin then ignores how
-# the other range reweights it (WT 61.1 against 63.1 from the full law, for
-# CRCL < 30 and WT in 40-80), so each first-stage node is weighted by
-# P(rest in its range | node) -- a normal probability, from the node's latent
-# shift and scale -- and the rest are cut from their conditional law truncated
-# to their range: re-expressed by their conditional margin (.admCovEffMargin)
-# on a standardised latent, so the ordinary range machinery truncates the law
-# they actually have at the node. Exact for one ranged covariate among the
-# rest; more than one is refused rather than approximated.
-.admDoseStrata <- function(cd, S, n_nodes, cov_range = NULL) {
-  cd  <- .admCovDistCanon(cd)
-  nms <- .admCovSpecNames(cd)
-  R   <- cd[["latentR"]]
-  cont <- S[vapply(S, function(v) is.null(cd[[v]][["values"]]), logical(1))]
-  rngd <- intersect(names(cov_range), cont)
-  coupled <- function(v) {
-    o <- match(setdiff(cont, v), nms)
-    !is.null(R) && length(o) && any(abs(R[match(v, nms), o]) > 1e-12)
-  }
-  first <- Filter(coupled, rngd)
-  if (length(S) < 2L || !length(first))
-    return(.admCovStrata(cd, S, n_nodes, warn_range = FALSE,
-                         cov_range = cov_range))
-  first <- first[1L]
-  rest  <- setdiff(S, first)
-  rr    <- intersect(names(cov_range), rest)       # ranges on the rest
-  if (length(intersect(rr, cont)) > 1L)
-    stop("admixr2: the dose reads ", length(intersect(rr, cont)) + 1L,
-         " correlated covariates that each have an enrolled range or band (",
-         paste(sQuote(c(first, intersect(rr, cont))), collapse = ", "),
-         "); admixr2 conditions exactly on two at most. Drop a `range` that ",
-         "does not restrict enrolment, or band on one covariate only.",
-         call. = FALSE)
-  # stage 1: `first` inside its range, and inside every range not on the rest
-  cr1 <- cov_range[setdiff(names(cov_range), rr)]
-  st1 <- .admCovStrata(cd, first, n_nodes, warn_range = FALSE,
-                       cov_range = if (length(cr1)) cr1)
-  out <- list(); tot <- 0
-  for (nd in st1) {
-    cdn <- nd$cov_dist; p <- 1
-    for (b in rr) {                                # at most one continuous
-      lo_hi <- sort(as.numeric(cov_range[[b]]))
-      sp <- cdn[[b]]
-      if (!is.null(sp[["values"]])) {              # a discrete level set
-        pr <- sp[["probs"]] %||% rep(1, length(sp[["values"]]))
-        k  <- sp[["values"]] >= lo_hi[1L] & sp[["values"]] <= lo_hi[2L]
-        p  <- p * sum(pr[k]) / sum(pr)
-        next
-      }
-      jb <- match(b, .admCovSpecNames(cdn))
-      m  <- as.numeric(cdn[["latentMu"]][jb] %||% 0)
-      v  <- as.numeric(cdn[["latentScale"]][jb] %||% 1)
-      zz <- stats::qnorm(.admCovCdfOf(sp)(lo_hi))
-      p  <- p * (stats::pnorm((zz[2L] - m) / v) - stats::pnorm((zz[1L] - m) / v))
-      # the conditional margin on a standardised latent: the range below now
-      # truncates the law `b` has at this node, and `.band` maps through it
-      cdn[[b]] <- .admCovEffMargin(cdn, b)
-      if (!is.null(cdn[["latentMu"]]))    cdn[["latentMu"]][jb] <- 0
-      if (!is.null(cdn[["latentScale"]])) cdn[["latentScale"]][jb] <- 1
-    }
-    if (!(p > 0)) next
-    st2 <- .admDoseStrata(cdn, rest, n_nodes,
-                          if (length(rr)) cov_range[rr])
-    for (nd2 in st2)
-      out[[length(out) + 1L]] <- list(cov = c(nd$cov, nd2$cov)[S],
-                                      cov_dist = nd2$cov_dist,
-                                      weight = nd$weight * p * nd2$weight,
-                                      n_pool_cell = NA_integer_)
-    tot <- tot + nd$weight * p
-  }
-  if (!(tot > 0))
-    stop("admixr2: the enrolled ranges of ", paste(sQuote(c(first, rr)),
-         collapse = " and "), " leave no patients under the declared ",
-         "correlation.", call. = FALSE)
-  # only a second range reweights; without one every weight is left as it was
-  if (length(rr))
-    for (k in seq_along(out)) out[[k]]$weight <- out[[k]]$weight / tot
-  out
 }
 
 # One spec per node of `stl` (from .admCovStrata over covariates S), built from

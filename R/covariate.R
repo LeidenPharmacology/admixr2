@@ -1315,6 +1315,108 @@
   .admCovDistCanon(out)
 }
 
+# STRATA OVER A RANGED, CORRELATED SET, CONDITIONED SEQUENTIALLY -- or NULL
+# when the joint route below is exact and nothing needs doing.
+#
+# The joint route lays a grid over the stratified covariates rotated by
+# chol(R_SS), and a range-truncated margin enters it through its OWN uniform:
+# the correlation then acts on the margin's position inside its range, not on
+# the full-margin latent the copula couples through, so a correlated partner
+# never feels the range. Measured with WT and CRCL stratified at rho = 0.6 and
+# CRCL enrolled at 15-40: E[WT] 75.00 against 67.63 from the full law, through
+# plain `stratify` as much as through a dose rule. The projected design's
+# truncated branch (.admCovCloud) maps the same way, so this route wins over
+# `proj` too. The marginalised block maps through `.band` and IS exact, so:
+#   1. cut the ranged covariate alone (the rest conditioned exactly on each
+#      node), and
+#   2. cut the rest from each node's conditional law.
+# A product of exact conditional rules is a rule for the joint law.
+#
+# A RANGE ON THE REST TOO makes the target a normal truncated to a RECTANGLE
+# in latent space, so each stage-1 node is weighted by P(rest in range | node)
+# -- a normal probability from the node's latent shift and scale -- and the
+# rest are re-expressed by their conditional margin (.admCovEffMargin) on a
+# standardised latent, so the ordinary range machinery truncates the law they
+# have at the node. Any number of ranged covariates: each stage weights its
+# node by P(the NEXT ranged covariate in range | everything conditioned so
+# far), and the product of those factors is the truncated joint law.
+.admCovStrataSeq <- function(cd, S, n_nodes, n_pool, cov_range) {
+  res <- .admCovSeqCore(cd, S, n_nodes, n_pool, cov_range, top = TRUE)
+  if (is.null(res)) return(NULL)
+  out <- res$nodes
+  # weights carry P(next range | conditioning) factors; normalise once, at the
+  # end. Without any such factor every weight is left as it was, bit for bit.
+  if (res$reweighted) {
+    tot <- sum(vapply(out, function(z) z$weight, numeric(1)))
+    if (!(tot > 0))
+      stop("admixr2: the enrolled ranges of ",
+           paste(sQuote(intersect(names(cov_range), S)), collapse = ", "),
+           " leave no patients under the declared correlation.", call. = FALSE)
+    for (k in seq_along(out)) out[[k]]$weight <- out[[k]]$weight / tot
+  }
+  out
+}
+
+# One stage of .admCovStrataSeq(): cut a ranged, coupled covariate `first`
+# alone, weight each node by P(the next ranged covariate in its range | node),
+# re-express that covariate by its conditional margin on a standardised latent,
+# and recurse over the rest. Weights are left UNNORMALISED, so the product of
+# the stages' range probabilities survives to the end. NULL at the top when no
+# ranged covariate is coupled to another, and the joint route is exact.
+.admCovSeqCore <- function(cd, S, n_nodes, n_pool, cov_range, top = FALSE) {
+  cd  <- .admCovDistCanon(cd)
+  nms <- .admCovSpecNames(cd)
+  R   <- cd[["latentR"]]
+  rS  <- if (length(cov_range)) cov_range[intersect(names(cov_range), nms)]
+  cont <- S[vapply(S, function(v) is.null(cd[[v]][["values"]]), logical(1))]
+  coupled <- function(v) {
+    o <- match(setdiff(cont, v), nms)
+    !is.null(R) && length(o) > 0L && any(abs(R[match(v, nms), o]) > 1e-12)
+  }
+  first <- if (length(S) > 1L) Filter(coupled, intersect(names(rS), cont))
+  if (!length(first)) {
+    if (top) return(NULL)
+    return(list(nodes = .admCovStrata(cd, S, n_nodes, n_pool, warn_range = FALSE,
+                                      cov_range = if (length(rS)) rS),
+                reweighted = FALSE))
+  }
+  first <- first[1L]
+  rest  <- setdiff(S, first)
+  rr    <- intersect(names(rS), rest)                      # ranges on the rest
+  nxt   <- intersect(rr, cont)[1L]                         # NA when none
+  # stage 1: `first` inside its range, and inside every range not on the rest
+  cr1 <- rS[setdiff(names(rS), rr)]
+  st1 <- .admCovStrata(cd, first, n_nodes, n_pool, warn_range = FALSE,
+                       cov_range = if (length(cr1)) cr1)
+  out <- list(); rew <- !is.na(nxt)
+  for (nd in st1) {
+    cdn <- nd$cov_dist; p <- 1
+    if (!is.na(nxt)) {
+      lo_hi <- sort(as.numeric(rS[[nxt]]))
+      jb <- match(nxt, .admCovSpecNames(cdn))
+      m  <- as.numeric(cdn[["latentMu"]][jb] %||% 0)
+      v  <- as.numeric(cdn[["latentScale"]][jb] %||% 1)
+      zz <- stats::qnorm(.admCovCdfOf(cdn[[nxt]])(lo_hi))
+      p  <- stats::pnorm((zz[2L] - m) / v) - stats::pnorm((zz[1L] - m) / v)
+      # the conditional margin on a standardised latent: its range below now
+      # truncates the law it has at this node, and `.band` maps through it
+      cdn[[nxt]] <- .admCovEffMargin(cdn, nxt)
+      if (!is.null(cdn[["latentMu"]]))    cdn[["latentMu"]][jb] <- 0
+      if (!is.null(cdn[["latentScale"]])) cdn[["latentScale"]][jb] <- 1
+    }
+    if (!(p > 0)) next
+    sub <- .admCovSeqCore(cdn, rest, n_nodes, n_pool,
+                          if (length(rr)) rS[rr])
+    rew <- rew || sub$reweighted
+    for (nd2 in sub$nodes)
+      out[[length(out) + 1L]] <- list(cov = c(nd$cov, nd2$cov)[S],
+                                      cov_dist = nd2$cov_dist,
+                                      weight = nd$weight * p * nd2$weight,
+                                      n_pool_cell = NA_integer_)
+  }
+  list(nodes = out, reweighted = rew)
+}
+
 .admCovStrata <- function(cov_dist, stratify, n_nodes = 5L,
                           n_pool = 32768L, cov_range = NULL,
                           warn_range = TRUE, proj = NULL) {
@@ -1330,6 +1432,31 @@
         " that this study's `cov_dist` does not declare. Declared: ",
         paste(sQuote(nms), collapse = ", "), ".")
   checkmate::assertCount(n_nodes, positive = TRUE)
+  # A ranged stratified covariate correlated with another stratified one:
+  # the joint grid (and the projected design) would map the range through the
+  # margin's own uniform. Condition sequentially instead -- see
+  # .admCovStrataSeq(). The no-range warning below still applies to it.
+  .seq_needed <- !is.null(cov_range) && length(stratify) > 1L
+  # ...unless the projected design takes this set: its truncated cloud is drawn
+  # from the box-truncated law itself (.admCovCloud), exact and much cheaper
+  if (.seq_needed && !is.null(proj)) {
+    .sc <- Filter(function(v) is.null(cov_dist[[v]][["values"]]), stratify)
+    if (length(.sc) == proj$pc && setequal(.sc, proj$cn)) .seq_needed <- FALSE
+  }
+  if (.seq_needed) {
+    .no_rng <- setdiff(stratify, names(cov_range))
+    .seq <- .admCovStrataSeq(cov_dist, stratify, n_nodes, n_pool, cov_range)
+    if (!is.null(.seq)) {
+      if (warn_range && length(.no_rng))
+        warning("admixr2: conditioning on ", paste(sQuote(.no_rng), collapse = ", "),
+                " over the FULL declared distribution, because no range was ",
+                "given for ", if (length(.no_rng) == 1L) "it" else "them",
+                ". Supply the reported span: `range = list(", .no_rng[1L],
+                " = c(min, max))` in admStudy(), or `cov_range` here.",
+                call. = FALSE)
+      return(.seq)
+    }
+  }
   # CONDITION ONLY WHERE THE SOURCE ENROLLED. Without a reported range the strata are cut over the whole declared
   # distribution, and the source is credited with evidence at covariate values it never sampled -- see
   # .admCovTruncSpec(). Warn rather than do it silently, because the silent case is the leaky one.
@@ -3954,12 +4081,57 @@ print.covDist <- function(x, ...) {
 # whole reason the truncated branch exists is that truncation bends that map,
 # so projecting z would recombine the wrong coordinates. `A` carries the
 # loadings on log(x), where the pair IS linear.
+#
+# A TRUNCATED margin is a range on the FULL-margin latent, recorded as `.band`
+# = [F(a), F(b)], and the correlation couples the full latents. The atoms are
+# therefore drawn from the correlated normal TRUNCATED TO THAT BOX, coordinate
+# by coordinate: each from its conditional normal given the ones before,
+# truncated to its own band, by quadrature on the mapped interval, with the
+# band's conditional probability folded into the weight. Rotating a plain grid
+# by chol(Rss) and reading each margin through its own uniform instead -- the
+# old construction -- applied the correlation to positions INSIDE the bands,
+# so a correlated partner never felt a range (E[WT] 75 against 67.6 for CRCL
+# enrolled at 15-40, rho 0.6). Each atom is returned on the margin's own score
+# z = qnorm(u), u its position inside its band, which is what the strata code
+# reads it through (and maps back to the full latent with `.band`). Without a
+# truncated margin the old construction is kept, bit for bit.
 .admCovCloud <- function(cov_dist, cn, Rss, A, j) {
-  gg <- .adghNodeGrid(j, length(cn))
-  z0 <- gg$X %*% chol(Rss)
-  x0 <- vapply(seq_along(cn), function(k)
-    .admCovQuantile(cov_dist[[cn[k]]], .admCovU(z0[, k])), numeric(nrow(z0)))
-  list(z = z0, w = as.numeric(gg$W / sum(gg$W)), su = log(x0) %*% A)
+  band <- lapply(cn, function(v) cov_dist[[v]][[".band"]] %||% c(0, 1))
+  if (all(vapply(band, function(b) b[1L] <= 0 && b[2L] >= 1, logical(1)))) {
+    gg <- .adghNodeGrid(j, length(cn))
+    z0 <- gg$X %*% chol(Rss)
+    x0 <- vapply(seq_along(cn), function(k)
+      .admCovQuantile(cov_dist[[cn[k]]], .admCovU(z0[, k])), numeric(nrow(z0)))
+    return(list(z = z0, w = as.numeric(gg$W / sum(gg$W)), su = log(x0) %*% A))
+  }
+  g1 <- .adghNodeGrid(j, 1L)
+  ug <- stats::pnorm(as.numeric(g1$X)); wg <- as.numeric(g1$W / sum(g1$W))
+  d  <- length(cn)
+  zf <- matrix(0, 1L, 0L); w <- 1                  # full-latent atoms so far
+  for (k in seq_len(d)) {
+    if (k == 1L) { m <- 0; s <- 1 } else {
+      B <- Rss[k, seq_len(k - 1L), drop = FALSE] %*%
+        solve(Rss[seq_len(k - 1L), seq_len(k - 1L), drop = FALSE])
+      m <- as.numeric(zf %*% t(B))
+      s <- sqrt(max(Rss[k, k] - as.numeric(B %*% Rss[seq_len(k - 1L), k]), 1e-12))
+    }
+    pa <- stats::pnorm((stats::qnorm(band[[k]][1L]) - m) / s)
+    pb <- stats::pnorm((stats::qnorm(band[[k]][2L]) - m) / s)
+    nr <- nrow(zf)
+    i  <- rep(seq_len(nr), each = length(ug))
+    uu <- rep(ug, times = nr)
+    zk <- m[i] + s * stats::qnorm(pa[i] + uu * (pb[i] - pa[i]))
+    w  <- w[i] * rep(wg, times = nr) * (pb[i] - pa[i])
+    zf <- cbind(zf[i, , drop = FALSE], zk)
+  }
+  # back to each margin's position inside its band, the score the caller reads
+  u  <- vapply(seq_len(d), function(k)
+    (stats::pnorm(zf[, k]) - band[[k]][1L]) / (band[[k]][2L] - band[[k]][1L]),
+    numeric(nrow(zf)))
+  u  <- matrix(pmin(pmax(u, 1e-15), 1 - 1e-15), ncol = d)
+  x0 <- vapply(seq_len(d), function(k)
+    .admCovQuantile(cov_dist[[cn[k]]], u[, k]), numeric(nrow(zf)))
+  list(z = stats::qnorm(u), w = w / sum(w), su = log(matrix(x0, ncol = d)) %*% A)
 }
 
 # Location and scale of the projected measure.
