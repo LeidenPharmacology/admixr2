@@ -138,6 +138,7 @@ reference:
     contents:
       - admStudy
       - doseBands
+      - combine-doseBands
       - admStudies
       - admPopulation
 
