@@ -2,80 +2,27 @@
 
 ## New features
 
-* **A dosing table whose doses depend on a covariate.** `doseBands()` now
-  transcribes rules such as "CrCl below 30: 5 mg/kg, otherwise 10 mg/kg":
-  - `doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT)` reads every amount
-    as a dose per unit of `WT`;
-  - for a cap or any other formula, give a band a function of the covariates
-    it reads: `amt = list(function(WT) 5 * WT, function(WT) pmin(10 * WT, 1000))`.
-    Bands may mix numbers and functions, and the timing arguments (`ii`, `addl`,
-    `dur`, ...) apply as before.
-
-  The band edges stay exact. Only the covariate the dose is proportional to is
-  cut into `strata_nodes` nodes inside each band, and it is conditioned on the
-  band when the two covariates are correlated. Writing the same rule as
-  `ifelse(CRCL < 30, 5, 10) * WT` in a dose function only approximates the
-  step: at the default 9 nodes the low band held 0.125 of the patients against
-  an exact 0.129, and more nodes did not converge to it.
-
-* **`doseBands()` takes rxode2 as its input.** Each band's doses are built by
-  `rxode2::et()` itself, and every `et()` argument passes through (`evid`,
-  `ss`, `until`, units, ...). The accepted names are read from rxode2 at run
-  time, so an argument a later rxode2 adds works with no change to admixr2; a
-  misspelt one is still refused, since `et()` would silently ignore it. A band
-  may also be a whole `rxode2::et()` table, or a function returning one.
-
-* **Dosing phases combine as rxode2 event tables do.** "5 days IV, then 16
-  days oral" is one `doseBands()` per phase: `c(iv, oral)` (or
-  `seq(iv, oral)`) runs them in sequence per band through `rxode2::etSeq()`, so
-  the oral phase starts where the IV phase ends; `rbind(a, b)` merges them by
-  time through `rxode2::etRbind()`. Phases may use different cut points
-  (merged automatically). An `et()` table among them is a dose everyone gets,
-  such as a loading dose, and a number in `c()`/`seq()` is a wait in hours, as
-  it is to `etSeq()`. Put a `doseBands()` first: R hands `c(et(...), bands)` and
-  `rbind(et(...), bands)` to rxode2, which keeps the event table and silently
-  drops the bands.
-
-* **A dose rule prints as the event table rxode2 built**, one row per band and
-  dose, columns as `rxode2::et()` gives them, both on its own and in `print()`
-  of a study. Amounts that depend on a covariate show their rule (`5 x WT`,
-  `f(WT)`), an unset `cmt` shows as the default compartment (`depot (default)`
-  in `print()` of a study, where the model is known).
-
-* **An infusion that names no compartment, in an oral model, now warns.**
-  Without `cmt` a dose goes to the model's first compartment, which in an oral
-  model is the depot, so an "IV" phase written without `cmt = "centr"` was
-  absorbed orally with nothing to show for it. `admStudy()` now says so and
-  names the model's compartments.
-
-* **admixr2 now says where a dose rule jumps or bends**, for a dose function of
-  any number of covariates and for each band's own dose. The warning names the
-  covariate and the value (`it jumps where CRCL is about 30`) and gives the
-  `doseBands()` call that would make the split exact. It used to check only
-  functions of a single covariate, so a step in a function of two covariates
-  passed without a word.
+* **`doseBands()` doses may depend on a covariate**: `per = WT` for mg/kg, or a
+  function per band, e.g. 5 mg/kg below a CrCl of 30 and 10 mg/kg above.
+* **`doseBands()` builds each band with `rxode2::et()`**: every `et()` argument
+  passes through, and a band may be an `et()` table or a function returning one.
+* **Dosing phases combine like event tables**: `c(iv, oral)` in sequence,
+  `rbind()` by time. Put a `doseBands()` first, or rxode2 drops the bands.
+* **A dose rule prints as each band's event table**, with an unset `cmt` shown as
+  the model's default compartment.
+* **`admStudy()` warns about a step or cap in a dose rule**, naming where, and
+  about an infusion without `cmt` that would go to an oral depot.
 
 ## Other changes
 
 * **admixr2 now requires R >= 4.3.0.**
-
-* **One definition of a dosing record.** Which event-table rows are doses
-  (rxode2's `evid` 1 and 4) was decided in five places that disagreed about
-  `evid` 5, 6 and 7 (replace, multiply, phantom); it is now decided in one, and
-  `addl` doses are expanded by `rxode2::etExpand()` rather than by hand.
+* **Dose records are identified in one place** (rxode2's `evid` 1 and 4), with
+  `addl` doses expanded by `rxode2::etExpand()`.
 
 ## Changes that can move an existing fit
 
-* **A dose function of correlated covariates with a `range` on one of them now
-  conditions the others on that range.** The truncated covariate was laid into
-  the node grid through its own position within the range rather than its place
-  in the full distribution, so its correlated partner did not shift at all:
-  with CRCL restricted to 15–40 and a WT–CRCL correlation of 0.6, the WT nodes
-  averaged 75 kg against 67.6 kg from the full distribution. Such studies are
-  now conditioned in sequence (the ranged covariate first), which is exact,
-  also when both covariates have a range (a CrCl band plus an enrolled weight
-  range, the usual case with `per = WT`); every other dose function keeps its
-  previous nodes bit for bit.
+* **A dose function of correlated covariates with a `range` now conditions the
+  others on it**: weight nodes averaged 75 kg instead of 67.6 kg for CrCl 15–40.
 
 # admixr2 0.4.2
 
