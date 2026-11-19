@@ -1465,8 +1465,6 @@ test_that("doseBands() takes every et() argument, by rxode2's own list", {
   expect_true(all(c("ii", "addl", "until", "evid", "ss", "rate", "dur") %in% ok))
   # passed straight to et(): evid, units, until (inclusive, as in rxode2)
   expect_equal(.sa_ev(doseBands(CRCL, 30, c(1, 2), evid = 4), 2)$evid, 4)
-  expect_s3_class(as.data.frame(admixr2:::.admDoseBandEv(
-    doseBands(CRCL, 30, c(1, 2), amountUnits = "mg"), 1))$amt, "units")
   expect_equal(.sa_ev(doseBands(CRCL, 30, c(1, 2), ii = 12, until = 120), 1)$addl, 10)
   # a typo is refused (et() would ignore it), naming rxode2's arguments
   expect_error(doseBands(CRCL, 30, c(1, 2), adl = 6), "not an rxode2::et\\(\\) argument")
@@ -1474,6 +1472,16 @@ test_that("doseBands() takes every et() argument, by rxode2's own list", {
   expect_error(doseBands(CRCL, 30, c(1, 2), addSampling = TRUE), "observation")
   expect_error(doseBands(CRCL, 30, c(1, 2), ii = 1, addl = 1, length.out = 3),
                "holds no dose")
+})
+
+test_that("et() units pass through doseBands() and show in its table", {
+  # rxode2 needs the suggested `units` package for amountUnits/timeUnits
+  skip_if_not_installed("units")
+  expect_s3_class(as.data.frame(admixr2:::.admDoseBandEv(
+    doseBands(CRCL, 30, c(1, 2), amountUnits = "mg"), 1))$amt, "units")
+  expect_match(admixr2:::.admDoseTable(doseBands(CRCL, 30, c(5, 10), per = WT,
+                                                 amountUnits = "mg"))$amt[1],
+               "5 x WT \\[mg\\]")
 })
 
 test_that("a band may be an et() table, or a function returning one", {
@@ -1559,9 +1567,6 @@ test_that("a dose rule prints as the event table rxode2 built", {
   expect_equal(admixr2:::.admDoseTable(c(doseBands(CRCL, 30, c(1, 2)),
                                          rxode2::et(amt = 1000)))$amt,
                c("1", "1000", "2", "1000"))
-  expect_match(admixr2:::.admDoseTable(doseBands(CRCL, 30, c(5, 10), per = WT,
-                                                 amountUnits = "mg"))$amt[1],
-               "5 x WT \\[mg\\]")
   expect_equal(admixr2:::.admDoseTable(doseBands(CRCL, 30,
     list(function(WT) 5 * WT, 300)))$amt, c("f(WT)", "300"))
 })
