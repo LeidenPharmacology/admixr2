@@ -63,8 +63,10 @@ combined exactly as rxode2 combines event tables: \code{c(iv, oral)} (or
 \code{\link[rxode2:etSeq]{rxode2::etSeq()}}, so the oral phase starts where the IV phase ends;
 \code{rbind(a, b)} merges them by time, through \code{\link[rxode2:etRbind]{rxode2::etRbind()}}. The phases
 may use different cut points (each band takes the doses of the phase band it
-falls in) but must band on the same covariate. An amount or an \code{et()} table
-among them is a phase every band gets, e.g. a loading dose.
+falls in) but must band on the same covariate. An \code{et()} table among them is
+a phase every band gets, e.g. a loading dose. Put a \code{doseBands()} first:
+with an \code{et()} table first, rxode2 handles the call and drops the bands
+(see \link{combine-doseBands}).
 
 \strong{A band's dose may itself depend on a covariate}, e.g. "CrCl below 30:
 5 mg/kg, otherwise 10 mg/kg":

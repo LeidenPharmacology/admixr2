@@ -14,8 +14,8 @@
 \method{rbind}{admDoseBands}(..., deparse.level = 1)
 }
 \arguments{
-\item{...}{\code{\link[=doseBands]{doseBands()}} objects, amounts or \code{\link[rxode2:et]{rxode2::et()}} tables, the first
-a \code{doseBands()}.}
+\item{...}{\code{\link[=doseBands]{doseBands()}} objects, \code{\link[rxode2:et]{rxode2::et()}} tables, or (in \code{c()}/
+\code{seq()}) waits in hours; the FIRST must be a \code{doseBands()}.}
 
 \item{deparse.level}{Not used; part of the \code{rbind()} generic.}
 }
@@ -29,9 +29,17 @@ ends --- exactly what \code{c()} does for two \code{rxode2::et()} tables. \code{
 merges them by time, through \code{\link[rxode2:etRbind]{rxode2::etRbind()}}, e.g. an oral dose and an
 infusion given together. The phases may use different cut points (every
 band of the result gets the doses of the phase band it falls in) but must
-band on the same covariate. An amount or an \code{rxode2::et()} table among them
-is a phase every band gets, e.g. a loading dose; start the call with a
-\code{doseBands()}, since \code{c()} and \code{seq()} dispatch on their first argument.
+band on the same covariate. An \code{rxode2::et()} table among them is a phase
+every band gets, e.g. a loading dose; a number in \code{c()}/\code{seq()} is what it is
+to \code{etSeq()}, a wait in hours between the phases (\code{c(iv, 12, oral)}).
+}
+\details{
+\strong{Put a \code{doseBands()} FIRST.} R sends \code{c()}, \code{seq()} and \code{rbind()} to the
+method of their first argument, so \code{c(rxode2::et(...), bands)} or
+\code{rbind(rxode2::et(...), bands)} is handled by rxode2, which keeps only the
+event table and silently drops the bands --- the study would then be fitted
+with the loading dose alone, and admixr2 never sees the bands to object.
+Write \code{rbind(bands, rxode2::et(...))}.
 }
 \examples{
 iv   <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),

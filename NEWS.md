@@ -30,8 +30,11 @@
   `seq(iv, oral)`) runs them in sequence per band through `rxode2::etSeq()`, so
   the oral phase starts where the IV phase ends; `rbind(a, b)` merges them by
   time through `rxode2::etRbind()`. Phases may use different cut points
-  (merged automatically). An amount or an `et()` table among them is a dose
-  everyone gets, such as a loading dose.
+  (merged automatically). An `et()` table among them is a dose everyone gets,
+  such as a loading dose, and a number in `c()`/`seq()` is a wait in hours, as
+  it is to `etSeq()`. Put a `doseBands()` first: R hands `c(et(...), bands)` and
+  `rbind(et(...), bands)` to rxode2, which keeps the event table and silently
+  drops the bands.
 
 * **A dose rule prints as the event table rxode2 built**, one row per band and
   dose, columns as `rxode2::et()` gives them, both on its own and in `print()`
@@ -69,8 +72,10 @@
   in the full distribution, so its correlated partner did not shift at all:
   with CRCL restricted to 15–40 and a WT–CRCL correlation of 0.6, the WT nodes
   averaged 75 kg against 67.6 kg from the full distribution. Such studies are
-  now conditioned in sequence (the ranged covariate first), which is exact;
-  every other dose function keeps its previous nodes bit for bit.
+  now conditioned in sequence (the ranged covariate first), which is exact,
+  also when both covariates have a range (a CrCl band plus an enrolled weight
+  range, the usual case with `per = WT`); every other dose function keeps its
+  previous nodes bit for bit.
 
 # admixr2 0.4.2
 

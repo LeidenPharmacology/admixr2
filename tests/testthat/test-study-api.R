@@ -1524,9 +1524,12 @@ test_that("c() and seq() run phases in sequence per band, as rxode2::etSeq() doe
   expect_equal(d2$breaks, c(25, 30, 50, 70))
   expect_equal(.sa_ev(d2, 2)$amt, c(175, 100))    # 25-30
   expect_equal(.sa_ev(d2, 3)$amt, c(175, 200))    # 30-50
-  # an amount or an et() table is a phase every band gets
-  expect_equal(.sa_ev(c(doseBands(CRCL, 30, c(1, 2)), rxode2::et(amt = 9)), 2)$amt,
-               c(2, 9))
+  # an et() table is a phase every band gets; with no `ii` anywhere, etSeq()'s
+  # 24-h spacing is announced ONCE, at c()
+  expect_warning(ce <- c(doseBands(CRCL, 30, c(1, 2)), rxode2::et(amt = 9)),
+                 "none of these phases sets a dosing interval")
+  expect_equal(.sa_ev(ce, 2)$amt, c(2, 9))
+  expect_equal(.sa_ev(ce, 2)$time, c(0, 24))
   expect_error(c(iv, doseBands(WT, 60, c(1, 2))), "SAME covariate")
   expect_error(c(iv, "a lot"), "can be combined")
 })
@@ -1564,8 +1567,8 @@ test_that("a dose rule prints as the event table rxode2 built", {
   expect_equal(t2$cmt, c("depot (default)", "depot (default)"))
   expect_identical(names(t2)[2:3], c("time", "cmt"))
   # amounts are formatted one by one, units kept
-  expect_equal(admixr2:::.admDoseTable(c(doseBands(CRCL, 30, c(1, 2)),
-                                         rxode2::et(amt = 1000)))$amt,
+  expect_equal(admixr2:::.admDoseTable(suppressWarnings(c(doseBands(CRCL, 30, c(1, 2)),
+                                         rxode2::et(amt = 1000))))$amt,
                c("1", "1000", "2", "1000"))
   expect_equal(admixr2:::.admDoseTable(doseBands(CRCL, 30,
     list(function(WT) 5 * WT, 300)))$amt, c("f(WT)", "300"))
@@ -1580,8 +1583,8 @@ test_that("an infusion with no cmt into an oral depot warns; the table names it"
   expect_match(w, "cmt = \"centr\"", fixed = TRUE)
   # the same through c(), an et() table and a dose function
   expect_warning(st(.sa_oral, rxode2::et(amt = 100, dur = 1)), "default dosing")
-  expect_warning(st(.sa_oral, c(iv, doseBands(CRCL, 30, c(1, 2), cmt = "depot"))),
-                 "default dosing")
+  ivpo <- suppressWarnings(c(iv, doseBands(CRCL, 30, c(1, 2), cmt = "depot")))
+  expect_warning(st(.sa_oral, ivpo), "default dosing")
   expect_warning(st(.sa_oral, function(WT) rxode2::et(amt = 2 * WT, dur = 1)),
                  "default dosing")
   # silent: a named compartment, a bolus (oral by default), an IV-only model
@@ -1617,6 +1620,108 @@ test_that("combined phases expand and are checked like one doseBands()", {
                c(0, 24, 48, 72))
   # the step/cap check totals the event table, addl doses included
   expect_equal(admixr2:::.admDoseTotal(rxode2::et(amt = 10, ii = 12, addl = 4)), 50)
+})
+
+# -- PR #169 review -----------------------------------------------------------
+
+test_that("two ranged dosing covariates are conditioned on the whole rectangle", {
+  # cutting the first from its own truncated margin ignored how the second's
+  # range reweights it: WT 61.11 against 63.11 for CRCL < 30, WT in 40-80
+  X <- covDraw(admixr2:::.admCovDistCanon(.sa_popwc), n = 400000L)
+  for (cr in list(list(CRCL = c(15, 40), WT = c(60, 100)),
+                  list(CRCL = c(-Inf, 30), WT = c(40, 80)))) {
+    st <- admixr2:::.admDoseStrata(.sa_popwc, c("CRCL", "WT"), 7L, cr)
+    w  <- vapply(st, function(z) z$weight, 0)
+    xy <- cbind(WT = vapply(st, function(z) z$cov$WT, 0),
+                CRCL = vapply(st, function(z) z$cov$CRCL, 0))
+    sel <- X[, "CRCL"] >= cr$CRCL[1] & X[, "CRCL"] <= cr$CRCL[2] &
+           X[, "WT"] >= cr$WT[1] & X[, "WT"] <= cr$WT[2]
+    expect_equal(sum(w), 1, tolerance = 1e-10)
+    expect_true(all(xy[, "WT"] >= cr$WT[1] & xy[, "WT"] <= cr$WT[2]))
+    expect_equal(sum(w * xy[, "WT"]), mean(X[sel, "WT"]), tolerance = 0.003)
+    expect_equal(sum(w * xy[, "CRCL"]), mean(X[sel, "CRCL"]), tolerance = 0.003)
+  }
+  # the usual case: per = WT with an enrolled WT range, through a study
+  skip_if_not_installed("rxode2")
+  s <- admStudy(model = .sa_noccr, population = .sa_popwc, n = 60,
+                times = c(1, 4, 12), range = list(WT = c(40, 110)), strata_nodes = 5L,
+                dose = doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT))
+  m  <- admixr2:::.admMaterialise(admStudies(s = s))
+  nn <- vapply(m, function(x) x$n, 0); wt <- vapply(m, function(x) x$cov$WT, 0)
+  b1 <- grepl("_CRCLb1m", names(m))
+  sel <- X[, "WT"] >= 40 & X[, "WT"] <= 110
+  expect_equal(sum(nn), 60, tolerance = 1e-8)
+  expect_equal(sum(nn[b1] * wt[b1]) / sum(nn[b1]),
+               mean(X[sel & X[, "CRCL"] < 30, "WT"]), tolerance = 0.003)
+  expect_equal(sum(nn[!b1] * wt[!b1]) / sum(nn[!b1]),
+               mean(X[sel & X[, "CRCL"] >= 30, "WT"]), tolerance = 0.003)
+})
+
+test_that("more than two ranged, correlated dosing covariates is refused", {
+  pop3 <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 50, sd = 20),
+                        AGE = c(mean = 60, sd = 12),
+                        cor = c(WT.CRCL = 0.6, WT.AGE = 0.3))
+  expect_error(admixr2:::.admDoseStrata(pop3, c("CRCL", "WT", "AGE"), 3L,
+                 list(CRCL = c(-Inf, 30), WT = c(40, 80), AGE = c(30, 80))),
+               "two at most")
+})
+
+test_that("an et() phase is checked like a band's", {
+  expect_error(rbind(doseBands(CRCL, 30, c(250, 500)),
+                     rxode2::et(amt = 1000) |> rxode2::et(seq(0, 24, 4))),
+               "added for every band has observation records")
+  expect_error(c(doseBands(CRCL, 30, c(1, 2)), rxode2::et(amt = -5)), "non-negative")
+})
+
+test_that("a number is a wait in c()/seq(), as in rxode2::etSeq(), and refused in rbind()", {
+  d <- c(doseBands(CRCL, 30, c(1, 2), ii = 24, addl = 1), 12,
+         doseBands(CRCL, 30, c(3, 4)))
+  # last dose at 24, then a 12-h wait after the interval: as etSeq() does it
+  ref <- rxode2::etSeq(rxode2::et(amt = 1, ii = 24, addl = 1), 12, rxode2::et(amt = 3))
+  expect_equal(.sa_ev(d, 1)$time, as.numeric(as.data.frame(ref)$time))
+  expect_match(format(d), "wait 12 h")
+  expect_error(rbind(doseBands(CRCL, 30, c(1, 2)), 5), "a number is not")
+})
+
+test_that("rounding is not a cap; a cap still is", {
+  pop <- admPopulation(WT = c(mean = 75, sd = 12))
+  st  <- function(f) admStudy(model = .sa_fitwt, n = 10, times = 1:2,
+                              population = pop, dose = f)
+  expect_warning(st(function(WT) round(5 * WT)), NA)
+  expect_warning(st(function(WT) pmin(15 * WT, 1100)), "bends sharply")
+  x <- seq(40, 110, length.out = 101)
+  expect_null(admixr2:::.admDoseRoughAlong(x, round(5 * x)))
+})
+
+test_that("the depot check is per band, counts cmt = 1, and never suggests NA", {
+  ui <- suppressMessages(rxode2::rxode2(.sa_oral))
+  # band 1 cannot be built at the medians; band 2 is still checked
+  d <- doseBands(CRCL, 30, amt = list(function(WT) if (WT > 0) stop("no") else 1, 500),
+                 dur = 1)
+  expect_warning(admixr2:::.admDoseCheckCmt(d, ui, "s", .sa_popwc), "default dosing")
+  expect_warning(admixr2:::.admDoseCheckCmt(
+    doseBands(CRCL, 30, c(1, 2), dur = 1, cmt = 1), ui, "s", .sa_popwc), "default dosing")
+  # naming the depot is a choice (zero-order absorption), not a slip
+  expect_warning(admixr2:::.admDoseCheckCmt(
+    doseBands(CRCL, 30, c(1, 2), dur = 1, cmt = "depot"), ui, "s", .sa_popwc), NA)
+  dep <- function() {
+    ini({ tcl <- log(5); tv <- log(50); eta.cl ~ 0.09; add.err <- 0.1 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+            d/dt(depot) = -cl / v * depot; cp = depot / v; cp ~ add(add.err) })
+  }
+  w <- tryCatch(admixr2:::.admDoseCheckCmt(doseBands(CRCL, 30, c(1, 2), dur = 1),
+                  suppressMessages(rxode2::rxode2(dep)), "s", .sa_popwc),
+                warning = conditionMessage)
+  expect_match(w, "no other compartment")
+  expect_false(grepl("NA", w, fixed = TRUE))
+})
+
+test_that("every kind of dose object declares every field", {
+  f <- c("covariate", "breaks", "amt", "timing", "per", "parts", "how", "fixed", "ev")
+  b <- doseBands(CRCL, 30, c(1, 2), ii = 24, addl = 1)
+  expect_named(b, f)
+  expect_named(c(b, b), f)
+  expect_named(c(b, rxode2::et(amt = 1))[["parts"]][[2L]], f)
 })
 
 test_that(".admDoseRoughAlong tells a step from a kink from a smooth curve", {

@@ -29,8 +29,10 @@
 #' [rxode2::etSeq()], so the oral phase starts where the IV phase ends;
 #' `rbind(a, b)` merges them by time, through [rxode2::etRbind()]. The phases
 #' may use different cut points (each band takes the doses of the phase band it
-#' falls in) but must band on the same covariate. An amount or an `et()` table
-#' among them is a phase every band gets, e.g. a loading dose.
+#' falls in) but must band on the same covariate. An `et()` table among them is
+#' a phase every band gets, e.g. a loading dose. Put a `doseBands()` first:
+#' with an `et()` table first, rxode2 handles the call and drops the bands
+#' (see [combine-doseBands]).
 #'
 #' **A band's dose may itself depend on a covariate**, e.g. "CrCl below 30:
 #' 5 mg/kg, otherwise 10 mg/kg":
@@ -178,12 +180,11 @@ doseBands <- function(covariate, breaks, amt, ..., per = NULL) {
   if (length(badlen))
     bad(paste(sQuote(badlen), collapse = ", "), " must have length 1 (the ",
         "same in every band) or ", k, " (one per band).")
-  d <- structure(list(covariate = cv, breaks = as.numeric(breaks),
-                      amt = if (is.list(amt)) lapply(amt, function(a)
-                              if (is.numeric(a)) as.numeric(a) else a)
-                            else as.numeric(amt),
-                      timing = timing, per = per),
-                 class = "admDoseBands")
+  d <- .admDoseNew(covariate = cv, breaks = as.numeric(breaks),
+                   amt = if (is.list(amt)) lapply(amt, function(a)
+                           if (is.numeric(a)) as.numeric(a) else a)
+                         else as.numeric(amt),
+                   timing = timing, per = per)
   # build every band once now, through et() itself, with stand-in amounts where
   # they need covariates: a detail et() rejects fails here, not at fit time
   for (j in seq_len(k))
@@ -223,12 +224,19 @@ doseBands <- function(covariate, breaks, amt, ..., per = NULL) {
 #' merges them by time, through [rxode2::etRbind()], e.g. an oral dose and an
 #' infusion given together. The phases may use different cut points (every
 #' band of the result gets the doses of the phase band it falls in) but must
-#' band on the same covariate. An amount or an `rxode2::et()` table among them
-#' is a phase every band gets, e.g. a loading dose; start the call with a
-#' `doseBands()`, since `c()` and `seq()` dispatch on their first argument.
+#' band on the same covariate. An `rxode2::et()` table among them is a phase
+#' every band gets, e.g. a loading dose; a number in `c()`/`seq()` is what it is
+#' to `etSeq()`, a wait in hours between the phases (`c(iv, 12, oral)`).
 #'
-#' @param ... [doseBands()] objects, amounts or [rxode2::et()] tables, the first
-#'   a `doseBands()`.
+#' **Put a `doseBands()` FIRST.** R sends `c()`, `seq()` and `rbind()` to the
+#' method of their first argument, so `c(rxode2::et(...), bands)` or
+#' `rbind(rxode2::et(...), bands)` is handled by rxode2, which keeps only the
+#' event table and silently drops the bands --- the study would then be fitted
+#' with the loading dose alone, and admixr2 never sees the bands to object.
+#' Write `rbind(bands, rxode2::et(...))`.
+#'
+#' @param ... [doseBands()] objects, [rxode2::et()] tables, or (in `c()`/
+#'   `seq()`) waits in hours; the FIRST must be a `doseBands()`.
 #' @param deparse.level Not used; part of the `rbind()` generic.
 #' @return An `admDoseBands` object, to pass as `dose` to [admStudy()].
 #' @examples
@@ -262,57 +270,110 @@ rbind.admDoseBands <- function(..., deparse.level = 1)
 
 # `how` is "seq" (rxode2::etSeq) or "rbind" (rxode2::etRbind), applied per
 # band. A combination is a tree: its `parts` are doseBands() objects, other
-# combinations, or fixed phases, on the merged cut points.
+# combinations, fixed et() phases, or -- in a sequence -- a NUMBER, which is
+# what it is to rxode2::etSeq(): a wait between the phases, not a dose.
 .admDoseCombine <- function(xs, how) {
-  parts <- lapply(xs, function(x) if (inherits(x, "admDoseBands")) x
-                                  else .admDoseFixedPhase(x))
-  cvs <- unique(unlist(lapply(parts, `[[`, "covariate")))
+  parts <- lapply(xs, function(x) {
+    if (inherits(x, "admDoseBands")) return(x)
+    if (inherits(x, "rxEt")) return(.admDoseFixedPhase(x))
+    if (is.numeric(x) && length(x) == 1L && is.finite(x) && x >= 0) {
+      if (how == "seq") return(as.numeric(x))
+      stop("admixr2: rbind() merges event tables by time, and a number is not ",
+           "one (rxode2::etRbind() would drop it). A dose for everyone is ",
+           "rxode2::et(amt = ", x, "); a wait between phases goes in c() or ",
+           "seq().", call. = FALSE)
+    }
+    stop("admixr2: only doseBands(), an rxode2::et() table",
+         if (how == "seq") " or a wait (a number of hours)",
+         " can be combined with doseBands(); got ", class(x)[1L], ".",
+         call. = FALSE)
+  })
+  cvs <- unique(unlist(lapply(parts, .admDoseCovOf)))
   if (length(cvs) != 1L)
     stop("admixr2: dosing phases combined together must band on the SAME ",
          "covariate; these band on ", paste(sQuote(cvs), collapse = " and "),
          ". For a dose that depends on both, give one phase per ", cvs[1L],
          " band with a function of ", cvs[2L], " as its amount.", call. = FALSE)
-  structure(list(covariate = cvs,
-                 breaks = sort(unique(unlist(lapply(parts, `[[`, "breaks")))),
-                 parts = parts, how = how),
-            class = "admDoseBands")
+  d <- .admDoseNew(covariate = cvs,
+                   breaks = sort(unique(unlist(lapply(parts, .admDoseBreaksOf)))),
+                   parts = parts, how = how)
+  # rxode2::etSeq() spaces phases with no `ii` 24 h apart and warns about it on
+  # EVERY build -- once per node and probe point, hundreds per study. Say it
+  # once here; the builds below run with that warning muffled.
+  if (how == "seq") {
+    # build band 1's parts, then call etSeq() here directly: the builds
+    # themselves muffle its warning, so this is the one place it can be heard
+    gap <- FALSE
+    lo  <- .admDoseLo(d, 1L)
+    evs <- tryCatch(lapply(parts, .admDoseNodeEv, lo = lo, cov = NULL,
+                           where = function() .admDoseBandWhere(d, 1L),
+                           labels = .admDoseLabels()),
+                    error = function(e) NULL)
+    if (length(evs) > 1L)
+      withCallingHandlers(
+        tryCatch(do.call(rxode2::etSeq, evs), error = function(e) NULL),
+        warning = function(w) if (grepl(.ADM_ETSEQ_NOII, conditionMessage(w))) {
+          gap <<- TRUE; invokeRestart("muffleWarning")
+        })
+    if (gap)
+      warning("admixr2: none of these phases sets a dosing interval (`ii`), so ",
+              "rxode2::etSeq() starts each phase 24 h after the previous one's ",
+              "last dose. Give `ii`, or a wait in hours between the phases, ",
+              "e.g. c(a, 12, b).", call. = FALSE)
+  }
+  d
 }
+.ADM_ETSEQ_NOII <- "No inter-dose interval found in event tables"
 
-# A phase every band gets: an amount or an event table, combined with bands.
-.admDoseFixedPhase <- function(x) {
-  ev <- if (inherits(x, "rxEt")) x
-        else if (is.numeric(x) && length(x) == 1L && is.finite(x) && x >= 0)
-          rxode2::et(amt = as.numeric(x))
-        else stop("admixr2: only doseBands(), an amount or an rxode2::et() ",
-                  "table can be combined with doseBands(); got ", class(x)[1L],
-                  ".", call. = FALSE)
-  structure(list(fixed = TRUE, ev = ev, breaks = numeric(0)),
+# The banded covariate and the cut points of one part of a combination; a
+# fixed phase or a wait has none.
+.admDoseCovOf <- function(p) if (inherits(p, "admDoseBands")) p[["covariate"]]
+.admDoseBreaksOf <- function(p)
+  if (inherits(p, "admDoseBands")) p[["breaks"]] else numeric(0)
+
+# Every admDoseBands object, whichever kind -- a doseBands() table (`amt`,
+# `timing`, `per`), a combination (`parts`, `how`) or a fixed phase (`fixed`,
+# `ev`) -- carries every field, NULL where it does not apply, and is read with
+# [[ ]]: `$` partial-matches, so a field absent on one kind would silently
+# resolve to a longer one (see CLAUDE.md, "`$` PARTIAL-MATCHES ON LISTS").
+.admDoseNew <- function(covariate = NULL, breaks = numeric(0), amt = NULL,
+                        timing = list(), per = NULL, parts = NULL, how = NULL,
+                        fixed = NULL, ev = NULL)
+  structure(list(covariate = covariate, breaks = breaks, amt = amt,
+                 timing = timing, per = per, parts = parts, how = how,
+                 fixed = fixed, ev = ev),
             class = "admDoseBands")
-}
+
+# A phase every band gets: an event table, combined with bands, and checked
+# like any band's (doses only, one subject, a non-negative amount).
+.admDoseFixedPhase <- function(x)
+  .admDoseNew(fixed = TRUE,
+              ev = .admDoseEvChecked(x, function() NULL))
 
 #' @export
 format.admDoseBands <- function(x, ...) {
-  if (!is.null(x$parts))
-    return(paste(vapply(x$parts, format, ""),
-                 collapse = if (identical(x$how, "rbind")) "  and  " else "  then  "))
-  if (isTRUE(x$fixed))
-    return(paste0("everyone: ", paste(format(as.numeric(.admEvDoses(x$ev)$amt)),
+  if (!is.null(x[["parts"]]))
+    return(paste(vapply(x[["parts"]], function(p)
+                   if (is.numeric(p)) paste0("wait ", format(p), " h") else format(p), ""),
+                 collapse = if (identical(x[["how"]], "rbind")) "  and  " else "  then  "))
+  if (isTRUE(x[["fixed"]]))
+    return(paste0("everyone: ", paste(format(as.numeric(.admEvDoses(x[["ev"]])$amt)),
                                       collapse = "+")))
-  a <- vapply(x$amt, function(v) {
+  a <- vapply(x[["amt"]], function(v) {
     if (is.function(v))
       return(paste0("f(", paste(names(formals(v)), collapse = ", "), ")"))
     if (inherits(v, "rxEt")) return("et()")
     s <- paste(vapply(v, format, ""), collapse = "+")
-    if (!is.null(x$per))
-      s <- paste0(if (length(v) > 1L) paste0("(", s, ")") else s, " x ", x$per)
+    if (!is.null(x[["per"]]))
+      s <- paste0(if (length(v) > 1L) paste0("(", s, ")") else s, " x ", x[["per"]])
     s
   }, "")
-  lab <- paste0(vapply(seq_along(x$amt), function(j) .admDoseBandWhere(x, j), ""),
+  lab <- paste0(vapply(seq_along(x[["amt"]]), function(j) .admDoseBandWhere(x, j), ""),
                 ": ", a)
   out <- paste(lab, collapse = "; ")
-  if (length(x$timing))
-    out <- paste0(out, "  (", paste(sprintf("%s = %s", names(x$timing),
-      vapply(x$timing, function(v)
+  if (length(x[["timing"]]))
+    out <- paste0(out, "  (", paste(sprintf("%s = %s", names(x[["timing"]]),
+      vapply(x[["timing"]], function(v)
         if (is.list(v)) paste(vapply(v, function(e)
           paste(format(e, trim = TRUE), collapse = ","), ""), collapse = " | ")
         else paste(format(v, trim = TRUE), collapse = ","),
@@ -322,11 +383,11 @@ format.admDoseBands <- function(x, ...) {
 
 #' @export
 print.admDoseBands <- function(x, ...) {
-  if (isTRUE(x$fixed)) {
+  if (isTRUE(x[["fixed"]])) {
     cat("Dose for everyone:", format(x), "\n")
     return(invisible(x))
   }
-  cat("Dosing by ", x$covariate, " band:\n", sep = "")
+  cat("Dosing by ", x[["covariate"]], " band:\n", sep = "")
   print(.admDoseTable(x), row.names = FALSE, right = FALSE)
   invisible(x)
 }
@@ -346,7 +407,7 @@ print.admDoseBands <- function(x, ...) {
     d   <- as.data.frame(.admDoseBandEv(x, j, labels = lab))
     d$id <- NULL
     if (!is.null(d$evid) && all(d$evid %in% 1L)) d$evid <- NULL
-    a  <- suppressWarnings(as.numeric(d$amt))
+    a  <- suppressWarnings(as.numeric(d[["amt"]]))
     tg <- !is.na(a) & a > .ADM_DOSE_TAG
     # element by element: a column formatted whole takes the stand-ins' width
     # and scientific notation (1000 printed as 1e+03)
@@ -368,7 +429,7 @@ print.admDoseBands <- function(x, ...) {
     }
     out$cmt[out$cmt %in% c("(default)", "-")] <- dflt
     band <- rep("", nrow(d))
-    band[1L] <- sub(paste0("^", x$covariate, " "), "", .admDoseBandWhere(x, j))
+    band[1L] <- sub(paste0("^", x[["covariate"]], " "), "", .admDoseBandWhere(x, j))
     as.data.frame(c(list(band = band), out), stringsAsFactors = FALSE,
                   check.names = FALSE)
   })
@@ -377,7 +438,7 @@ print.admDoseBands <- function(x, ...) {
     for (cn in setdiff(cols, names(b))) b[[cn]] <- "-"
     b[cols]
   }))
-  names(df)[1L] <- x$covariate
+  names(df)[1L] <- x[["covariate"]]
   df
 }
 
@@ -420,27 +481,39 @@ print.admDoseBands <- function(x, ...) {
     cd <- .admCovDistCanon(population)
     stats::setNames(lapply(covs, function(v) .admCovQuantile(cd[[v]], 0.5)), covs)
   }
-  evs <- tryCatch(switch(.admDoseKind(dose),
+  # each band on its own: one band that cannot be built at the medians must not
+  # switch the check off for all the others
+  quiet <- function(expr) tryCatch(expr, error = function(e) NULL)
+  evs <- switch(.admDoseKind(dose),
     ev    = list(dose),
     bands = lapply(seq_len(.admDoseNBands(dose)), function(j)
-              .admDoseBandEv(dose, j, med)),
-    fun   = list(.admDoseEvAt(dose, med)),
-    NULL), error = function(e) NULL)
-  inf <- any(vapply(evs, function(ev) {
+              quiet(.admDoseBandEv(dose, j, med))),
+    fun   = list(quiet(.admDoseEvAt(dose, med))),
+    NULL)
+  inf <- any(vapply(Filter(Negate(is.null), evs), function(ev) {
     d <- .admEvDoses(ev)
     if (!nrow(d)) return(FALSE)
     num <- function(cn) if (is.null(d[[cn]])) rep(0, nrow(d))
                         else { v <- suppressWarnings(as.numeric(d[[cn]])); v[is.na(v)] <- 0; v }
-    cm  <- if (is.null(d$cmt)) rep("(default)", nrow(d)) else as.character(d$cmt)
-    any((num("dur") != 0 | num("rate") != 0) & (is.na(cm) | cm == "(default)"))
+    cm  <- if (is.null(d[["cmt"]])) rep("(default)", nrow(d)) else as.character(d[["cmt"]])
+    # unset, or the default by NUMBER (cmt = 1): the depot without saying so.
+    # A dose that NAMES the depot is a choice (zero-order absorption), not a slip.
+    dflt <- is.na(cm) | cm %in% c("(default)", "1")
+    any((num("dur") != 0 | num("rate") != 0) & dflt)
   }, logical(1)))
-  if (inf)
+  if (inf) {
+    oth <- setdiff(ui$state, dc)
     warning("admixr2: study ", sQuote(nm), ": a dose given as an infusion ",
-            "(dur or rate) sets no `cmt`, so it goes to the model's default ",
-            "dosing compartment, ", sQuote(dc), ", which absorbs orally. An IV ",
-            "dose belongs in the central compartment: give cmt = \"",
-            setdiff(ui$state, dc)[1L] %||% "central", "\". This model's ",
-            "compartments: ", paste(ui$state, collapse = ", "), ".", call. = FALSE)
+            "(dur or rate) does not name its compartment, so it goes to the ",
+            "model's default dosing compartment, ", sQuote(dc), ", which ",
+            "absorbs orally. ",
+            if (length(oth))
+              paste0("An IV dose belongs in the central compartment: give cmt = \"",
+                     oth[1L], "\". This model's compartments: ",
+                     paste(ui$state, collapse = ", "), ".")
+            else paste0("This model has no other compartment, so it has no ",
+                        "route for an IV dose."), call. = FALSE)
+  }
   invisible()
 }
 
@@ -458,20 +531,20 @@ print.admDoseBands <- function(x, ...) {
 # is proportional to (`per`) or a function of; or a function's arguments.
 .admDoseCovs <- function(d) {
   if (inherits(d, "admDoseBands"))
-    return(unique(c(d$covariate, unlist(lapply(seq_len(.admDoseNBands(d)),
+    return(unique(c(d[["covariate"]], unlist(lapply(seq_len(.admDoseNBands(d)),
                                                .admDoseBandAmtCovs, d = d)))))
   if (is.function(d)) return(names(formals(d)))
   character(0)
 }
 
 # The bands, on the (merged) cut points, as a lo/hi table, open at both ends.
-.admDoseNBands <- function(d) length(d$breaks) + 1L
+.admDoseNBands <- function(d) length(d[["breaks"]]) + 1L
 .admDoseBandTable <- function(d)
-  data.frame(lo = c(-Inf, d$breaks), hi = c(d$breaks, Inf))
+  data.frame(lo = c(-Inf, d[["breaks"]]), hi = c(d[["breaks"]], Inf))
 
 # Band j as a reader would say it: "CRCL < 30", "30 to < 60", "CRCL >= 60".
 .admDoseBandWhere <- function(d, j) {
-  b <- d$breaks; k <- length(b) + 1L; cv <- d$covariate
+  b <- d[["breaks"]]; k <- length(b) + 1L; cv <- d[["covariate"]]
   if (j == 1L) sprintf("%s < %g", cv, b[1L])
   else if (j == k) sprintf("%s >= %g", cv, b[k - 1L])
   else sprintf("%g to < %g", b[j - 1L], b[j])
@@ -480,20 +553,21 @@ print.admDoseBands <- function(x, ...) {
 # A band of a combination is named by its lower edge `lo`: each part takes the
 # band of its OWN cut points that `lo` falls in (a value on a cut point is in
 # the band above). For a plain doseBands() that is band j itself.
-.admDoseLo <- function(d, j) c(-Inf, d$breaks)[j]
-.admDoseLeafIdx <- function(p, lo) findInterval(lo, p$breaks) + 1L
+.admDoseLo <- function(d, j) c(-Inf, d[["breaks"]])[j]
+.admDoseLeafIdx <- function(p, lo) findInterval(lo, p[["breaks"]]) + 1L
 
 # The covariates band j's AMOUNT reads (not the banded one, which only picks the
 # band): a function's arguments or `per`, over every part. Empty otherwise.
 .admDoseBandAmtCovs <- function(d, j) .admDoseNodeAmtCovs(d, .admDoseLo(d, j))
 .admDoseNodeAmtCovs <- function(node, lo) {
-  if (!is.null(node$parts))
-    return(unique(unlist(lapply(node$parts, .admDoseNodeAmtCovs, lo = lo))))
-  if (isTRUE(node$fixed)) return(character(0))
-  a <- node$amt[[.admDoseLeafIdx(node, lo)]]
+  if (is.numeric(node)) return(character(0))       # a wait in a sequence
+  if (!is.null(node[["parts"]]))
+    return(unique(unlist(lapply(node[["parts"]], .admDoseNodeAmtCovs, lo = lo))))
+  if (isTRUE(node[["fixed"]])) return(character(0))
+  a <- node[["amt"]][[.admDoseLeafIdx(node, lo)]]
   if (is.function(a)) names(formals(a))
   else if (inherits(a, "rxEt")) character(0)
-  else if (!is.null(node$per)) node$per
+  else if (!is.null(node[["per"]])) node[["per"]]
   else character(0)
 }
 
@@ -505,14 +579,20 @@ print.admDoseBands <- function(x, ...) {
   .admDoseNodeEv(d, .admDoseLo(d, j), cov, function() .admDoseBandWhere(d, j),
                  labels)
 .admDoseNodeEv <- function(node, lo, cov, where, labels) {
-  if (!is.null(node$parts)) {
-    evs <- lapply(node$parts, .admDoseNodeEv, lo = lo, cov = cov,
+  # a number is a wait, handed to etSeq() as it is
+  if (is.numeric(node)) return(node)
+  if (!is.null(node[["parts"]])) {
+    evs <- lapply(node[["parts"]], .admDoseNodeEv, lo = lo, cov = cov,
                   where = where, labels = labels)
     if (length(evs) == 1L) return(evs[[1L]])
-    return(do.call(if (identical(node$how, "rbind")) rxode2::etRbind
-                   else rxode2::etSeq, evs))
+    if (identical(node[["how"]], "rbind"))
+      return(do.call(rxode2::etRbind, evs))
+    # the no-`ii` 24-h spacing is announced once, by .admDoseCombine()
+    return(withCallingHandlers(do.call(rxode2::etSeq, evs),
+      warning = function(w) if (grepl(.ADM_ETSEQ_NOII, conditionMessage(w)))
+        invokeRestart("muffleWarning")))
   }
-  if (isTRUE(node$fixed)) return(node$ev)
+  if (isTRUE(node[["fixed"]])) return(node[["ev"]])
   .admDoseLeafEv(node, .admDoseLeafIdx(node, lo), cov, where, labels)
 }
 
@@ -522,10 +602,10 @@ print.admDoseBands <- function(x, ...) {
 # arguments. A band given as an et() table, or a function returning one, is
 # used as it is.
 .admDoseLeafEv <- function(p, i, cov, where, labels = NULL) {
-  k <- length(p$amt)
-  a <- p$amt[[i]]
+  k <- length(p[["amt"]])
+  a <- p[["amt"]][[i]]
   if (inherits(a, "rxEt")) return(.admDoseEvChecked(a, where))
-  tim <- lapply(p$timing, .admDoseAt, j = i, k = k)
+  tim <- lapply(p[["timing"]], .admDoseAt, j = i, k = k)
   if (!is.null(labels)) {
     lab <- if (is.function(a)) {
       f <- paste0("f(", paste(names(formals(a)), collapse = ", "), ")")
@@ -533,7 +613,7 @@ print.admDoseBands <- function(x, ...) {
       if (m > 1L) paste0(f, " [", seq_len(m), "]") else f
     } else {
       s <- vapply(a, format, "")
-      if (!is.null(p$per)) paste(s, "x", p$per) else s
+      if (!is.null(p[["per"]])) paste(s, "x", p[["per"]]) else s
     }
     amt <- .ADM_DOSE_TAG + length(labels$lab) + seq_along(lab)
     labels$lab <- c(labels$lab, lab)
@@ -565,8 +645,8 @@ print.admDoseBands <- function(x, ...) {
 # Band i's amount(s) at node `cov`, checked: numbers, `per` times the
 # covariate, or a function's result (amounts, or an et() table returned whole).
 .admDoseLeafAmt <- function(p, i, cov, where) {
-  a  <- p$amt[[i]]
-  cv <- if (is.function(a)) names(formals(a)) else if (!is.null(p$per)) p$per
+  a  <- p[["amt"]][[i]]
+  cv <- if (is.function(a)) names(formals(a)) else if (!is.null(p[["per"]])) p[["per"]]
   if (!length(cv)) return(a)
   if (is.null(cov) || !all(cv %in% names(cov)))
     stop("admixr2: internal: band ", i, "'s dose reads ",
@@ -578,7 +658,7 @@ print.admDoseBands <- function(x, ...) {
          tryCatch(do.call(a, as.list(cov)[cv]), error = function(e)
            stop("admixr2: doseBands(): the dose function failed ", w, ": ",
                 conditionMessage(e), call. = FALSE))
-       else a * as.numeric(cov[[p$per]])
+       else a * as.numeric(cov[[p[["per"]]]])
   if (inherits(r, "rxEt")) return(r)
   if (!is.numeric(r) || !length(r) || any(!is.finite(r)) || any(r < 0))
     stop("admixr2: doseBands(): the dose ", w, " is ",
@@ -596,7 +676,9 @@ print.admDoseBands <- function(x, ...) {
 # holds for any et() argument.
 .admDoseEvChecked <- function(ev, where) {
   d <- as.data.frame(ev)
-  w <- function() paste0("in band ", sQuote(where()))
+  # `where()` names the band; NULL for an et() table added for every band
+  w <- function() { b <- where()
+    if (is.null(b)) "added for every band" else paste0("in band ", sQuote(b)) }
   if (!is.null(d$id) && length(unique(d$id)) > 1L)
     stop("admixr2: doseBands(): the doses ", w(), " are for several subjects ",
          "(`id`); an aggregate study's dose is one regimen.", call. = FALSE)
@@ -666,7 +748,7 @@ print.admDoseBands <- function(x, ...) {
 .admDoseBandNodeSet <- function(cd, d, j) {
   acv <- .admDoseBandAmtCovs(d, j)
   if (!length(acv)) return(NULL)
-  bcv <- d$covariate
+  bcv <- d[["covariate"]]
   nms <- .admCovSpecNames(cd)
   R   <- cd[["latentR"]]
   oth <- match(setdiff(acv, bcv), nms)
@@ -689,6 +771,18 @@ print.admDoseBands <- function(x, ...) {
 # conditional law (the incoming latentMu/latentScale path). A product of exact
 # conditional rules is a rule for the joint law. Otherwise the joint grid is
 # kept, so every design that was right stays bit-identical.
+#
+# A RANGE ON THE REST TOO (a band on CRCL and an enrolled WT range, the usual
+# case with per = WT) makes the target a normal truncated to a RECTANGLE in
+# latent space. Cutting `first` from its own truncated margin then ignores how
+# the other range reweights it (WT 61.1 against 63.1 from the full law, for
+# CRCL < 30 and WT in 40-80), so each first-stage node is weighted by
+# P(rest in its range | node) -- a normal probability, from the node's latent
+# shift and scale -- and the rest are cut from their conditional law truncated
+# to their range: re-expressed by their conditional margin (.admCovEffMargin)
+# on a standardised latent, so the ordinary range machinery truncates the law
+# they actually have at the node. Exact for one ranged covariate among the
+# rest; more than one is refused rather than approximated.
 .admDoseStrata <- function(cd, S, n_nodes, cov_range = NULL) {
   cd  <- .admCovDistCanon(cd)
   nms <- .admCovSpecNames(cd)
@@ -705,18 +799,58 @@ print.admDoseBands <- function(x, ...) {
                          cov_range = cov_range))
   first <- first[1L]
   rest  <- setdiff(S, first)
+  rr    <- intersect(names(cov_range), rest)       # ranges on the rest
+  if (length(intersect(rr, cont)) > 1L)
+    stop("admixr2: the dose reads ", length(intersect(rr, cont)) + 1L,
+         " correlated covariates that each have an enrolled range or band (",
+         paste(sQuote(c(first, intersect(rr, cont))), collapse = ", "),
+         "); admixr2 conditions exactly on two at most. Drop a `range` that ",
+         "does not restrict enrolment, or band on one covariate only.",
+         call. = FALSE)
+  # stage 1: `first` inside its range, and inside every range not on the rest
+  cr1 <- cov_range[setdiff(names(cov_range), rr)]
   st1 <- .admCovStrata(cd, first, n_nodes, warn_range = FALSE,
-                       cov_range = cov_range)
-  # the remaining margins come back already truncated, so the ranges are spent
-  out <- list()
+                       cov_range = if (length(cr1)) cr1)
+  out <- list(); tot <- 0
   for (nd in st1) {
-    st2 <- .admDoseStrata(nd$cov_dist, rest, n_nodes, NULL)
+    cdn <- nd$cov_dist; p <- 1
+    for (b in rr) {                                # at most one continuous
+      lo_hi <- sort(as.numeric(cov_range[[b]]))
+      sp <- cdn[[b]]
+      if (!is.null(sp[["values"]])) {              # a discrete level set
+        pr <- sp[["probs"]] %||% rep(1, length(sp[["values"]]))
+        k  <- sp[["values"]] >= lo_hi[1L] & sp[["values"]] <= lo_hi[2L]
+        p  <- p * sum(pr[k]) / sum(pr)
+        next
+      }
+      jb <- match(b, .admCovSpecNames(cdn))
+      m  <- as.numeric(cdn[["latentMu"]][jb] %||% 0)
+      v  <- as.numeric(cdn[["latentScale"]][jb] %||% 1)
+      zz <- stats::qnorm(.admCovCdfOf(sp)(lo_hi))
+      p  <- p * (stats::pnorm((zz[2L] - m) / v) - stats::pnorm((zz[1L] - m) / v))
+      # the conditional margin on a standardised latent: the range below now
+      # truncates the law `b` has at this node, and `.band` maps through it
+      cdn[[b]] <- .admCovEffMargin(cdn, b)
+      if (!is.null(cdn[["latentMu"]]))    cdn[["latentMu"]][jb] <- 0
+      if (!is.null(cdn[["latentScale"]])) cdn[["latentScale"]][jb] <- 1
+    }
+    if (!(p > 0)) next
+    st2 <- .admDoseStrata(cdn, rest, n_nodes,
+                          if (length(rr)) cov_range[rr])
     for (nd2 in st2)
       out[[length(out) + 1L]] <- list(cov = c(nd$cov, nd2$cov)[S],
                                       cov_dist = nd2$cov_dist,
-                                      weight = nd$weight * nd2$weight,
+                                      weight = nd$weight * p * nd2$weight,
                                       n_pool_cell = NA_integer_)
+    tot <- tot + nd$weight * p
   }
+  if (!(tot > 0))
+    stop("admixr2: the enrolled ranges of ", paste(sQuote(c(first, rr)),
+         collapse = " and "), " leave no patients under the declared ",
+         "correlation.", call. = FALSE)
+  # only a second range reweights; without one every weight is left as it was
+  if (length(rr))
+    for (k in seq_along(out)) out[[k]]$weight <- out[[k]]$weight / tot
   out
 }
 
@@ -843,10 +977,14 @@ print.admDoseBands <- function(x, ...) {
 }
 
 # One probe line: a JUMP is one grid step that moves the dose far more than its
-# neighbours do; a KINK is a slope that changes by a quarter of its largest
-# value between two neighbouring steps. A smooth rule (mg/kg, allometric) drifts
-# slowly on a 101-point grid and trips neither.
-.admDoseRoughAlong <- function(x, a) {
+# neighbours do; a KINK is a slope that CHANGES AND STAYS CHANGED -- the mean
+# slope over the `w` steps after a point differs from the mean over the `w`
+# before it by a quarter of the largest such mean. A smooth rule (mg/kg,
+# allometric) drifts slowly and trips neither. Comparing NEIGHBOURING steps
+# instead read rounding as a cap: round(5 * WT) alternates 3- and 4-mg steps on
+# the grid, a slope change of a quarter at every other step, while its window
+# means stay at 5 mg/kg.
+.admDoseRoughAlong <- function(x, a, w = 5L) {
   if (length(a) < 4L || any(!is.finite(a))) return(NULL)
   da <- diff(a); span <- diff(range(a))
   if (span <= 0) return(NULL)
@@ -854,9 +992,15 @@ print.admDoseBands <- function(x, ...) {
   nb <- pmax(c(0, ad[-length(ad)]), c(ad[-1L], 0))
   j  <- which(ad > 10 * nb & ad > 1e-3 * span)
   if (length(j)) return(list(kind = "step", at = mean(x[j[1L] + 0:1]), j = j[1L]))
-  s  <- da / diff(x); ds <- abs(diff(s)); m <- max(abs(s))
+  s <- da / diff(x); n <- length(s)
+  if (n < 2L * w) return(NULL)
+  i  <- w:(n - w)
+  cs <- c(0, cumsum(s))
+  sl <- (cs[i + 1L] - cs[i - w + 1L]) / w           # mean slope over s[(i-w+1):i]
+  sr <- (cs[i + w + 1L] - cs[i + 1L]) / w           # mean slope over s[(i+1):(i+w)]
+  ds <- abs(sr - sl); m <- max(abs(c(sl, sr)))
   if (m > 0 && max(ds) > 0.25 * m)
-    return(list(kind = "kink", at = x[which.max(ds) + 1L]))
+    return(list(kind = "kink", at = x[i[which.max(ds)] + 1L]))
   NULL
 }
 
@@ -891,6 +1035,6 @@ print.admDoseBands <- function(x, ...) {
   switch(.admDoseKind(d),
     amt   = paste0("dose ", format(d)),
     ev    = "event table",
-    bands = paste0("dose by ", d$covariate, " band"),
+    bands = paste0("dose by ", d[["covariate"]], " band"),
     fun   = paste0("dose = f(", paste(.admDoseCovs(d), collapse = ", "), ")"))
 }

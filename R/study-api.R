@@ -709,7 +709,7 @@ admStudy <- function(model = NULL, est = NULL,
       bad("`at` pins ", paste(sQuote(.pin), collapse = ", "), " but ", .what,
           " reads ", if (length(.pin) == 1L) "it" else "them", " too.")
     if (.dk == "bands") {
-      .bcv <- dose$covariate
+      .bcv <- dose[["covariate"]]
       if (!is.null(population[[.bcv]][["values"]]))
         bad("doseBands() needs a CONTINUOUS covariate; ", sQuote(.bcv),
             " is declared with levels. Give `dose` as a function of it ",
@@ -747,10 +747,10 @@ admStudy <- function(model = NULL, est = NULL,
         # one vectorised call where the band's dose is one amount rule;
         # combined phases and et() results are probed point by point, on the
         # total of the event table rxode2 builds (addl expanded)
-        .ak <- if (is.null(dose$parts)) dose$amt[[.k]]
+        .ak <- if (is.null(dose[["parts"]])) dose[["amt"]][[.k]]
         .vf <- if (is.function(.ak)) .ak
-               else if (is.numeric(.ak) && length(.ak) == 1L && !is.null(dose$per))
-                 function(...) .ak * list(...)[[dose$per]]
+               else if (is.numeric(.ak) && length(.ak) == 1L && !is.null(dose[["per"]]))
+                 function(...) .ak * list(...)[[dose[["per"]]]]
         .hit <- .admDoseRough(.vf,
                               function(cv) .admDoseTotal(.admDoseBandEv(dose, .k, cv)),
                               population, .admDoseBandAmtCovs(dose, .k), .crk)
@@ -818,7 +818,7 @@ print.admStudy <- function(x, ...) {
   cat(sprintf("  design    n = %s, %s, %d times (%g - %g)\n",
               format(x$n), dz, length(x$times), min(x$times), max(x$times)))
   if (inherits(x$dose, "admDoseBands")) {
-    cat("  dose      by ", x$dose$covariate, " band:\n", sep = "")
+    cat("  dose      by ", x$dose[["covariate"]], " band:\n", sep = "")
     cat(paste0("            ", utils::capture.output(
       print(.admDoseTable(x$dose, .admDefaultCmt(x$ui)), row.names = FALSE,
             right = FALSE))),
@@ -1200,7 +1200,7 @@ print() a single study to check its transcription.
     # of that span. Going through `cov_range` means the truncation, the joint
     # rebuild and the no-range warning are the code `range` already uses.
     if (identical(.dk, "bands")) {
-      .bcv  <- s$dose$covariate
+      .bcv  <- s$dose[["covariate"]]
       .bbd  <- .admDoseBandTable(s$dose)
       .bcd  <- .admCovDistCanon(s$population)
       .bcdf <- .admCovCdfOf(.bcd[[.bcv]])
