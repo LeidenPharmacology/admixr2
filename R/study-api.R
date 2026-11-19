@@ -318,7 +318,9 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'     `dose = function(WT) rxode2::et(amt = pmin(15 * WT, 2000), ii = 12,
 #'     addl = 6, dur = 1)` for a capped mg/kg infusion every 12 h;
 #'   * a dosing table by covariate band, `dose = doseBands(CRCL, breaks = 30,
-#'     amt = c(100, 200))` --- see [doseBands()].
+#'     amt = c(100, 200))` --- see [doseBands()]. A band's dose may itself
+#'     depend on a covariate: `doseBands(CRCL, breaks = 30, amt = c(5, 10),
+#'     per = WT)` for 5 or 10 mg/kg by CrCl band.
 #'
 #'   A function or a table expands the study into one study per dose group,
 #'   each with its own dose, so the pooled analysis model needs no dose rule.
@@ -327,7 +329,8 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   splits the population exactly at its band edges, which nodes cannot do for
 #'   a stepwise rule, so write a step as `doseBands()`, not as an `ifelse()` in
 #'   a function (a kink such as a cap, `pmin(15 * WT, 2000)`, is likewise only
-#'   approximated unless `strata_nodes` is raised). Covariates correlated with the dosing ones are conditioned
+#'   approximated unless `strata_nodes` is raised). admixr2 warns, naming the
+#'   covariate and where, when a dose rule jumps or bends sharply. Covariates correlated with the dosing ones are conditioned
 #'   on each node or band. A `range` on a dosing covariate gives the enrolled
 #'   span, and the groups are cut inside it. Both need a published or simulated
 #'   `model`: a digitised pooled `E`/`V` cannot be split into per-dose profiles.
@@ -706,7 +709,7 @@ admStudy <- function(model = NULL, est = NULL,
       bad("`at` pins ", paste(sQuote(.pin), collapse = ", "), " but ", .what,
           " reads ", if (length(.pin) == 1L) "it" else "them", " too.")
     if (.dk == "bands") {
-      .bcv <- dose$covariate
+      .bcv <- dose[["covariate"]]
       if (!is.null(population[[.bcv]][["values"]]))
         bad("doseBands() needs a CONTINUOUS covariate; ", sQuote(.bcv),
             " is declared with levels. Give `dose` as a function of it ",
@@ -716,6 +719,46 @@ admStudy <- function(model = NULL, est = NULL,
                               anyNA(.brng) || .brng[1L] >= .brng[2L]))
         bad("`range` for ", sQuote(.bcv), " must be two increasing values, ",
             "e.g. range = list(", .bcv, " = c(15, 75)).")
+      # A band whose amount reads a covariate (`per`, or a function): evaluate
+      # it at the nodes the fit will cut inside the band, so a negative or
+      # missing amount fails while the study is written down.
+      .bcd <- .admCovDistCanon(population)
+      .nrng <- if (is.list(range) && !is.null(names(range))) range else NULL
+      .nn <- strata_nodes %||% .ADM_STRATA_NODES
+      for (.k in seq_len(.admDoseNBands(dose))) {
+        .S <- .admDoseBandNodeSet(.bcd, dose, .k)
+        if (is.null(.S)) next
+        .span <- .admDoseBandSpan(dose, .k, .brng)
+        if (is.null(.span)) next
+        .crk <- utils::modifyList(as.list(.nrng %||% list()),
+                                  stats::setNames(list(.span), .bcv))
+        .stl <- tryCatch(
+          .admDoseStrata(population, .S, .nn, .crk),
+          error = function(e) bad("could not cut ", paste(.S, collapse = ", "),
+                                  " into dose groups inside band ",
+                                  sQuote(.admDoseBandWhere(dose, .k)), ": ",
+                                  conditionMessage(e)))
+        # build each node's event table through et(), so whatever it rejects
+        # fails here
+        for (.nd in .stl)
+          tryCatch(.admDoseBandEv(dose, .k, .nd$cov),
+                   error = function(e) bad(sub("^admixr2: ", "",
+                                               conditionMessage(e))))
+        # one vectorised call where the band's dose is one amount rule;
+        # combined phases and et() results are probed point by point, on the
+        # total of the event table rxode2 builds (addl expanded)
+        .ak <- if (is.null(dose[["parts"]])) dose[["amt"]][[.k]]
+        .vf <- if (is.function(.ak)) .ak
+               else if (is.numeric(.ak) && length(.ak) == 1L && !is.null(dose[["per"]]))
+                 function(...) .ak * list(...)[[dose[["per"]]]]
+        .hit <- .admDoseRough(.vf,
+                              function(cv) .admDoseTotal(.admDoseBandEv(dose, .k, cv)),
+                              population, .admDoseBandAmtCovs(dose, .k), .crk)
+        if (!is.null(.hit))
+          .admDoseRoughWarn(.hit, paste0("the dose in band ",
+                                         sQuote(.admDoseBandWhere(dose, .k))),
+                            .nn, band_of = .bcv)
+      }
     } else {
       # Evaluate at the nodes the fit will use, so a dose that is negative,
       # missing or not a single number anywhere fails while the study is
@@ -728,23 +771,20 @@ admStudy <- function(model = NULL, est = NULL,
       if (!length(.rng)) .rng <- NULL
       .dsk <- list(population, .dcv, strata_nodes %||% .ADM_STRATA_NODES, .rng)
       .stl <- tryCatch(
-        .admCovStrata(population, .dcv, .dsk[[3L]],
-                      warn_range = FALSE, cov_range = .rng),
+        .admDoseStrata(population, .dcv, .dsk[[3L]], .rng),
         error = function(e) bad("could not cut ", paste(.dcv, collapse = ", "),
                                 " into dose groups: ", conditionMessage(e)))
-      .tot <- numeric(0)
       for (.nd in .stl)
-        .tot <- c(.tot, tryCatch(
-          .admDoseTotal(.admDoseEvAt(dose, .nd$cov)),
-          error = function(e) bad(conditionMessage(e))))
+        tryCatch(.admDoseEvAt(dose, .nd$cov),
+                 error = function(e) bad(conditionMessage(e)))
       .dose_strata <- list(key = .dsk, strata = .stl)
-      if (length(.dcv) == 1L && is.null(population[[.dcv]][["values"]]) &&
-          .admDoseKinked(vapply(.stl, function(z) z$cov[[.dcv]], numeric(1)),
-                         .tot))
-        warning("admixr2: the dose function is not smooth across its ",
-                length(.stl), " nodes (a cap or a step?), so the dose groups ",
-                "only approximate it. Write a step as doseBands(), or raise ",
-                "`strata_nodes` to resolve a kink.", call. = FALSE)
+      # Probed on a fine grid along EACH covariate the function reads -- the
+      # nodes themselves only lie on a line for one covariate.
+      .hit <- .admDoseRough(dose,
+                            function(cv) .admDoseTotal(.admDoseEvAt(dose, cv)),
+                            population, .dcv, .rng)
+      if (!is.null(.hit))
+        .admDoseRoughWarn(.hit, "the dose function", .dsk[[3L]])
     }
   }
   overlap <- intersect(names(at), .admCovSpecNames(population))
@@ -754,6 +794,9 @@ admStudy <- function(model = NULL, est = NULL,
         if (length(overlap) == 1L) "it a distribution" else "them distributions",
         ". Remove the pinned covariate from `population`; conditioning a ",
         "dependent population requires its conditional distribution.")
+  # an infusion with no `cmt` into an oral depot: plausible numbers, wrong route
+  if (!is.null(ui))
+    .admDoseCheckCmt(dose, ui, nm, population)
   structure(list(
     ui = ui, model = model,
     E = E, V = V, n = as.numeric(n), times = as.numeric(times),
@@ -774,8 +817,19 @@ print.admStudy <- function(x, ...) {
   dz <- .admDoseLabel(x$dose)
   cat(sprintf("  design    n = %s, %s, %d times (%g - %g)\n",
               format(x$n), dz, length(x$times), min(x$times), max(x$times)))
-  if (inherits(x$dose, "admDoseBands"))
-    cat("  dose      ", format(x$dose), "\n", sep = "")
+  if (inherits(x$dose, "admDoseBands")) {
+    cat("  dose      by ", x$dose[["covariate"]], " band:\n", sep = "")
+    # a band whose function returns its own et() is built at the medians
+    .med <- tryCatch(.admDoseMedians(x$dose, x$population), error = function(e) NULL)
+    .tab <- .admDoseTable(x$dose, .admDefaultCmt(x$ui), cov = .med)
+    cat(paste0("            ", utils::capture.output(
+      print(.tab, row.names = FALSE, right = FALSE))), sep = "\n")
+    if (isTRUE(attr(.tab, "built_at")))
+      cat("            (a band given as a function returning et() is shown at ",
+          paste(sprintf("%s = %s", names(.med), vapply(.med, function(v)
+            format(signif(v, 3)), "")), collapse = ", "),
+          ", the population medians)\n", sep = "")
+  }
   if (is.function(x$dose))
     cat("  dose      function(", paste(.admDoseCovs(x$dose), collapse = ", "),
         ") ", paste(deparse(body(x$dose)), collapse = " "), "\n", sep = "")
@@ -1152,7 +1206,7 @@ print() a single study to check its transcription.
     # of that span. Going through `cov_range` means the truncation, the joint
     # rebuild and the no-range warning are the code `range` already uses.
     if (identical(.dk, "bands")) {
-      .bcv  <- s$dose$covariate
+      .bcv  <- s$dose[["covariate"]]
       .bbd  <- .admDoseBandTable(s$dose)
       .bcd  <- .admCovDistCanon(s$population)
       .bcdf <- .admCovCdfOf(.bcd[[.bcv]])
@@ -1166,21 +1220,53 @@ print() a single study to check its transcription.
       .R  <- .bcd[["latentR"]]
       .bi <- match(.bcv, .admCovSpecNames(.bcd))
       .bcorr <- !is.null(.R) && any(abs(.R[.bi, - .bi, drop = TRUE]) > 1e-12)
-      for (k in seq_len(nrow(.bbd))) {
-        .lo <- max(.bbd$lo[k], .brng[1L]); .hi <- min(.bbd$hi[k], .brng[2L])
-        if (.lo >= .hi) next              # band outside the enrolled span
-        spk <- sp
-        spk$n   <- s$n * diff(.bcdf(c(.lo, .hi))) / .pR
-        spk$ev  <- .admDoseBandEv(s$dose, k)
-        spk <- iovfix(spk)
-        spk$cov_range <- utils::modifyList(as.list(sp$cov_range %||% list()),
-                                           stats::setNames(list(c(.lo, .hi)), .bcv))
+      .bstrat <- function(spk) {
         if (.bcorr)
           spk$stratify <- if (identical(spk$stratify, FALSE)) .bcv
                           else union(spk$stratify, .bcv)
-        g <- gen(stats::setNames(list(spk), paste0(nm, "_", .bcv, "b", k)),
-                 model = s$ui, control = datagenControl(method = "gh"))
-        for (kk in names(g)) add(kk, g[[kk]])
+        spk
+      }
+      # each band's share of n: the banded covariate's own, unless an enrolled
+      # range on a covariate correlated with it moves patients between bands
+      .spans <- lapply(seq_len(nrow(.bbd)), function(k)
+        .admDoseBandSpan(s$dose, k, .brng))
+      .in    <- !vapply(.spans, is.null, logical(1))
+      .shr   <- .admDoseBandShares(.bcd, .bcv, .spans[.in], sp$cov_range)
+      if (!is.null(.shr)) { .sh <- numeric(length(.spans)); .sh[.in] <- .shr }
+      for (k in seq_len(nrow(.bbd))) {
+        .span <- .spans[[k]]
+        if (is.null(.span)) next          # band outside the enrolled span
+        spb <- sp
+        spb$n <- if (is.null(.shr)) s$n * diff(.bcdf(.span)) / .pR
+                 else s$n * .sh[[k]]
+        spb$cov_range <- utils::modifyList(as.list(sp$cov_range %||% list()),
+                                           stats::setNames(list(.span), .bcv))
+        # A band whose AMOUNT reads a covariate (`per = WT`, a function) is cut
+        # into nodes inside the band, each with amt evaluated at the node: the
+        # band edge stays exact and only the proportional covariate is nodal.
+        .S <- .admDoseBandNodeSet(.bcd, s$dose, k)
+        if (is.null(.S)) {
+          spb$ev <- .admDoseBandEv(s$dose, k)
+          spb <- .bstrat(iovfix(spb))
+          g <- gen(stats::setNames(list(spb), paste0(nm, "_", .bcv, "b", k)),
+                   model = s$ui, control = datagenControl(method = "gh"))
+          for (kk in names(g)) add(kk, g[[kk]])
+          next
+        }
+        stl <- .admDoseStrata(s$population, .S, .admStrataNodes(s),
+                              spb$cov_range)
+        kids <- .admDoseNodeSpecs(spb, stl, .S)
+        for (i in seq_along(kids)) {
+          spk <- kids[[i]]
+          spk$ev <- .admDoseBandEv(s$dose, k, stl[[i]]$cov)
+          spk <- iovfix(spk)
+          # the banded covariate still varies inside the band when the nodes
+          # did not pin it; it then conditions the rest exactly as above
+          if (!.bcv %in% .S) spk <- .bstrat(spk)
+          g <- gen(stats::setNames(list(spk), paste0(nm, "_", .bcv, "b", k, "m", i)),
+                   model = s$ui, control = datagenControl(method = "gh"))
+          for (kk in names(g)) add(kk, g[[kk]])
+        }
       }
       next
     }
@@ -1194,32 +1280,18 @@ print() a single study to check its transcription.
       stl <- if (identical(s[[".dose_strata"]]$key,
                            list(s$population, .fcv, .admStrataNodes(s),
                                 sp$cov_range))) s[[".dose_strata"]]$strata
-             else .admCovStrata(s$population, .fcv, .admStrataNodes(s),
-                                warn_range = FALSE, cov_range = sp$cov_range)
+             else .admDoseStrata(s$population, .fcv, .admStrataNodes(s),
+                                 sp$cov_range)
       if (is.null(stl) || !length(stl))
         stop("admixr2: study '", nm, "': the dose function's covariates ",
              paste(sQuote(.fcv), collapse = ", "), " produced no nodes; ",
              "check their declared margins.", call. = FALSE)
+      # the REMAINING covariates keep their distribution CONDITIONAL on the
+      # node (the copula is conditioned, not dropped -- dropping would refuse
+      # a correlated baseline table, and conditioning is exact)
+      kids <- .admDoseNodeSpecs(sp, stl, .fcv)
       for (k in seq_along(stl)) {
-        spk <- sp
-        spk$n   <- s$n * stl[[k]]$weight
-        spk[["cov"]] <- utils::modifyList(as.list(sp[["cov"]] %||% list()),
-                                          stl[[k]]$cov)
-        # the REMAINING covariates keep their distribution CONDITIONAL on the
-        # node (the copula is conditioned, not dropped -- dropping would
-        # refuse a correlated baseline table, and conditioning is exact)
-        spk$cov_dist <- stl[[k]]$cov_dist
-        # their ranges were spent cutting the nodes; left on, datagen would
-        # re-truncate the POINT specs and fail. Re-applying the others is a
-        # no-op (a margin truncated to [a, b] already has F(a) = 0, F(b) = 1).
-        for (.c in .fcv) spk$cov_range[[.c]] <- NULL
-        if (!length(spk$cov_range)) spk$cov_range <- NULL
-        # the dosing covariates are PINNED at the node now, so they must not
-        # also be cut into nodes by datagen's own stratify pass
-        if (!identical(spk$stratify, FALSE)) {
-          spk$stratify <- setdiff(spk$stratify, .fcv)
-          if (!length(spk$stratify)) spk$stratify <- FALSE
-        }
+        spk <- kids[[k]]
         spk$ev <- .admDoseEvAt(s$dose, stl[[k]]$cov)
         spk <- iovfix(spk)
         g <- gen(stats::setNames(list(spk),
