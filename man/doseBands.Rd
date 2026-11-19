@@ -4,52 +4,34 @@
 \alias{doseBands}
 \title{A dosing table by covariate band}
 \usage{
-doseBands(
-  covariate,
-  breaks,
-  amt,
-  ...,
-  per = NULL,
-  start = NULL,
-  duration = NULL
-)
+doseBands(covariate, breaks, amt, ..., per = NULL)
 }
 \arguments{
 \item{covariate}{The covariate the bands are cut on, bare or quoted
-(\code{CRCL} or \code{"CRCL"}); a variable holding the name also works. It must be declared, as a continuous covariate, in
-the study's \code{population}.}
+(\code{CRCL} or \code{"CRCL"}); a variable holding the name also works. It must be
+declared, as a continuous covariate, in the study's \code{population}.}
 
 \item{breaks}{Increasing cut points between bands.}
 
 \item{amt}{Amount for each band, lowest band first; one more than \code{breaks}.
-A band that gets several doses at once (an oral dose plus an infusion) takes
-a list, one element per band, each holding that band's amounts. A list
-element may instead be a function of covariates returning the band's
-amount(s), e.g. \code{function(WT) 5 * WT}.}
+As a list, one element per band, each element is that band's amounts
+(several doses at once, e.g. an oral dose plus an infusion), a function of
+covariates returning them or an \code{et()} table, or an \code{rxode2::et()} table.}
 
-\item{...}{How each dose is given, as \code{\link[rxode2:et]{rxode2::et()}} arguments: \code{time},
-\code{cmt}, \code{ii}, \code{addl}, \code{dur}, \code{rate}, \code{ss}, \code{until}; length 1 (all bands) or
-one per band. Without them each band gets one bolus at time 0. Without
-\code{cmt}, a dose goes to the model's default (first) compartment --- the
-depot in an oral model --- so give an IV dose its compartment
-(\code{cmt = "centr"}); \code{\link[=admStudy]{admStudy()}} warns about an infusion that does not.}
+\item{...}{\code{\link[rxode2:et]{rxode2::et()}} arguments for every band's doses; length 1 (all
+bands) or one per band. A list gives one element per band, each holding
+that band's per-dose values. Not used with a band given as an \code{et()}
+table, which carries its own.}
 
 \item{per}{Optional covariate every amount is given per unit of, bare or
 quoted: \code{per = WT} reads \code{amt = c(5, 10)} as 5 and 10 mg/kg. It must be
 declared in the study's \code{population}. For a cap or any other formula use
 functions in \code{amt} instead.}
-
-\item{start}{Optional time the doses start (the same as \code{time}), e.g.
-\code{start = 120} for an oral phase from day 5. One value, or one per band.}
-
-\item{duration}{Optional length of the dosing period, e.g. \code{duration = 120}
-for five days: doses are given every \code{ii} from \code{start} while they fall
-before \code{start + duration}. Needs \code{ii}; replaces \code{addl}/\code{until}. One value,
-or one per band.}
 }
 \value{
 An \code{admDoseBands} object, to pass as \code{dose} to \code{\link[=admStudy]{admStudy()}}. It
-prints as the dosing table, one row per band and dose.
+prints as the dosing table: each band's event table as \code{rxode2::et()}
+built it.
 }
 \description{
 Transcribes a paper's dosing table, e.g. "CrCl below 30 mL/min: 100 mg;
@@ -60,23 +42,29 @@ otherwise 200 mg", for the \code{dose} argument of \code{\link[=admStudy]{admStu
 \code{breaks} are the cut points between bands and \code{amt} the amount for each band,
 lowest first, so there is always one more amount than cut points and the
 bands cover the whole range with no gaps. A value equal to a cut point falls
-in the band above it. Anything else about how each dose is given ---
-\code{ii}, \code{addl}, \code{dur}, \code{rate}, \code{cmt}, ... --- is written as in \code{\link[rxode2:et]{rxode2::et()}}.
-Each is one value, shared by every band, or one value per band, so the
-regimen itself can depend on the covariate (\code{ii = c(24, 12)}).
+in the band above it.
 
-How long to dose can be given three ways: \code{addl} (doses after the first, as
-in rxode2), \code{until} (the time of the last dose allowed --- rxode2's, and
-INCLUSIVE, so \code{until = 120} with \code{ii = 12} doses at 120 too), or \code{duration}
-(doses every \code{ii} from \code{start} while they fall before \code{start + duration}, so
-\code{duration = 120} is five days at any interval).
+\strong{Everything else is \code{\link[rxode2:et]{rxode2::et()}}.} Each band's doses are built by
+\code{rxode2::et()} itself, and every \code{et()} argument may be given in \code{...}
+(\code{ii}, \code{addl}, \code{until}, \code{dur}, \code{rate}, \code{cmt}, \code{ss}, \code{evid}, \code{time}, units,
+...): one value shared by every band, or one value per band, so the regimen
+itself can depend on the covariate (\code{ii = c(24, 12)}). The accepted names are
+read from rxode2 at run time, so an argument rxode2 adds is accepted with no
+change here; a misspelt one is refused, since \code{et()} would silently ignore
+it. A band may also be a whole \code{et()} table, \code{amt = list(rxode2::et(...), rxode2::et(...))}, for anything one call cannot express.
 
-\strong{Phases} (5 days IV, then 16 days oral) are written one \code{doseBands()} per
-phase and added: \code{iv + oral}, with the later phase given its \code{start}. See
-\link{+.admDoseBands}. The same can be written in one call by giving \code{amt} as a
-list and the per-dose details as vectors inside lists (a length-1 list is
-shared by all bands), e.g. \verb{amt = list(c(500, 100), c(1000, 200)), cmt = list(c("depot", "centr")), dur = list(c(0, 1))} --- also the way to
-give several doses AT ONCE (an oral dose plus an infusion).
+Without \code{cmt} a dose goes to the model's default (first) compartment --- the
+depot in an oral model --- so give an IV dose its compartment
+(\code{cmt = "centr"}); \code{\link[=admStudy]{admStudy()}} warns about an infusion that does not.
+
+\strong{Phases} (5 days IV, then 16 days oral) are one \code{doseBands()} per phase,
+combined exactly as rxode2 combines event tables: \code{c(iv, oral)} (or
+\code{seq(iv, oral)}) runs one after the other per band, through
+\code{\link[rxode2:etSeq]{rxode2::etSeq()}}, so the oral phase starts where the IV phase ends;
+\code{rbind(a, b)} merges them by time, through \code{\link[rxode2:etRbind]{rxode2::etRbind()}}. The phases
+may use different cut points (each band takes the doses of the phase band it
+falls in) but must band on the same covariate. An amount or an \code{et()} table
+among them is a phase every band gets, e.g. a loading dose.
 
 \strong{A band's dose may itself depend on a covariate}, e.g. "CrCl below 30:
 5 mg/kg, otherwise 10 mg/kg":
@@ -84,7 +72,8 @@ give several doses AT ONCE (an oral dose plus an infusion).
 \item \code{per = WT} makes every amount a dose per unit of \code{WT}:
 \code{doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT)};
 \item for any other formula, give a band a function of the covariates it reads,
-returning that band's amount(s): \code{amt = list(function(WT) 5 * WT, function(WT) pmin(10 * WT, 1000))}. Bands may mix numbers and functions.
+returning that band's amount(s) or a whole \code{et()} table:
+\code{amt = list(function(WT) 5 * WT, function(WT) pmin(10 * WT, 1000))}.
 }
 
 The band edges stay exact either way; only the covariate the dose is
@@ -104,33 +93,30 @@ doseBands(CRCL, breaks = 30, amt = c(100, 200))
 doseBands(CRCL, breaks = 30, amt = c(500, 1000), ii = 12, addl = 6, dur = 1)
 # the interval depends on the band too: daily below 30, twice daily above
 doseBands(CRCL, breaks = 30, amt = c(500, 1000), ii = c(24, 12), addl = c(2, 6))
-# every regimen detail depends on the band: dose, interval, duration, route
-doseBands(CRCL, breaks = c(25, 40, 60), amt = c(450, 450, 450, 900),
-          ii = c(48, 24, 12, 12), addl = 16, dur = c(0, 0, 1, 1),
-          cmt = c("depot", "depot", "centr", "centr"))
-# an oral dose AND a 1-h infusion at the same time, in every band
-doseBands(CRCL, breaks = 30, amt = list(c(500, 100), c(1000, 200)),
-          cmt = list(c("depot", "centr")), dur = list(c(0, 1)))
-# a paper's table: mg/kg as a 1-h infusion, interval by CrCl, for 7 days
+# a paper's table: mg/kg as a 1-h IV infusion, interval by CrCl, for 7 days
 doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
-          per = WT, dur = 1, ii = c(24, 24, 12, 12), duration = 168)
-# the same, with rxode2's own counting (addl doses after the first, or until)
-doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
-          per = WT, dur = 1, ii = c(24, 24, 12, 12), addl = c(6, 6, 13, 13))
-doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
-          per = WT, dur = 1, ii = c(24, 24, 12, 12), until = 167)
-# 5 days IV, then 16 days oral: one doseBands() per phase, added
+          per = WT, cmt = "centr", dur = 1, ii = c(24, 24, 12, 12),
+          addl = c(6, 6, 13, 13))
+# 5 days IV, then 16 days oral: one doseBands() per phase, in sequence
 # (name the IV compartment: without `cmt` a dose goes to the model's FIRST
 # compartment, which in an oral model is the depot)
 iv   <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "centr",
-                  dur = 1, ii = 24, duration = 120)
+                  dur = 1, ii = 24, addl = 4)
 oral <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "depot",
-                  ii = 24, start = 120, duration = 384)
-iv + oral
+                  ii = 24, addl = 15)
+c(iv, oral)
+# an oral dose AND a 1-h infusion at the same time: merge by time
+rbind(doseBands(CRCL, breaks = 30, amt = c(500, 1000), cmt = "depot"),
+      doseBands(CRCL, breaks = 30, amt = c(100, 200), cmt = "centr", dur = 1))
 # ... or in one call, two doses per band
-doseBands(CRCL, breaks = 30, amt = list(c(250, 250), c(500, 500)),
-          time = list(c(0, 120)), cmt = list(c("centr", "depot")),
-          dur = list(c(1, 0)), ii = 24, addl = list(c(4, 15)))
+doseBands(CRCL, breaks = 30, amt = list(c(500, 100), c(1000, 200)),
+          cmt = list(c("depot", "centr")), dur = list(c(0, 1)))
+# any et() argument passes through, e.g. a reset-and-dose record
+doseBands(CRCL, breaks = 30, amt = c(100, 200), evid = 4)
+# a band given as its own et() table
+doseBands(CRCL, breaks = 30, amt = list(
+  rxode2::et(amt = 100, ii = 24, addl = 6),
+  rxode2::et(amt = 400, dur = 1) |> rxode2::et(amt = 200, time = 12, ii = 12, addl = 12)))
 # mg/kg, with the mg/kg depending on the band
 doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT)
 # any formula per band: 5 mg/kg below 30, 10 mg/kg capped at 1 g above

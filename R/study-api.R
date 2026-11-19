@@ -738,17 +738,21 @@ admStudy <- function(model = NULL, est = NULL,
                                   " into dose groups inside band ",
                                   sQuote(.admDoseBandWhere(dose, .k)), ": ",
                                   conditionMessage(e)))
+        # build each node's event table through et(), so whatever it rejects
+        # fails here
         for (.nd in .stl)
-          tryCatch(.admDoseBandAmt(dose, .k, .nd$cov),
+          tryCatch(.admDoseBandEv(dose, .k, .nd$cov),
                    error = function(e) bad(sub("^admixr2: ", "",
                                                conditionMessage(e))))
-        # one vectorised call where the band's dose is one amount rule; phases
-        # added together are probed point by point
-        .ak <- if (is.null(dose$phases)) dose$amt[[.k]]
+        # one vectorised call where the band's dose is one amount rule;
+        # combined phases and et() results are probed point by point, on the
+        # total of the event table rxode2 builds (addl expanded)
+        .ak <- if (is.null(dose$parts)) dose$amt[[.k]]
         .vf <- if (is.function(.ak)) .ak
-               else if (length(.ak) == 1L)
+               else if (is.numeric(.ak) && length(.ak) == 1L && !is.null(dose$per))
                  function(...) .ak * list(...)[[dose$per]]
-        .hit <- .admDoseRough(.vf, function(cv) sum(.admDoseBandAmt(dose, .k, cv)),
+        .hit <- .admDoseRough(.vf,
+                              function(cv) .admDoseTotal(.admDoseBandEv(dose, .k, cv)),
                               population, .admDoseBandAmtCovs(dose, .k), .crk)
         if (!is.null(.hit))
           .admDoseRoughWarn(.hit, paste0("the dose in band ",
@@ -792,7 +796,7 @@ admStudy <- function(model = NULL, est = NULL,
         "dependent population requires its conditional distribution.")
   # an infusion with no `cmt` into an oral depot: plausible numbers, wrong route
   if (!is.null(ui))
-    .admDoseCheckCmt(dose, ui, nm, .dose_strata$strata)
+    .admDoseCheckCmt(dose, ui, nm, population)
   structure(list(
     ui = ui, model = model,
     E = E, V = V, n = as.numeric(n), times = as.numeric(times),

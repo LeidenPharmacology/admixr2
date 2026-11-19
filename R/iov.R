@@ -57,17 +57,13 @@
   rxode2::rxUiDecompress(suppressWarnings(eval(bquote(rxode2::model(.(ui), .(line), append = 0)))))
 }
 
-# Dose times of an et() event table (addl/ii expanded); NULL for anything else.
+# Dose times of an et() event table, addl doses expanded by rxode2::etExpand();
+# NULL for anything else.
 .admEtDoseTimes <- function(ev) {
   if (!inherits(ev, "rxEt")) return(NULL)
-  d <- as.data.frame(ev)
-  if (!"evid" %in% names(d)) return(NULL)
-  d <- d[d$evid %in% c(1, 4, 101, 104), , drop = FALSE]
+  d <- .admEvDoses(rxode2::etExpand(ev))
   if (!nrow(d)) return(NULL)
-  ii <- if ("ii" %in% names(d)) d$ii else 0
-  ad <- if ("addl" %in% names(d)) d$addl else 0
-  ii[is.na(ii)] <- 0; ad[is.na(ad)] <- 0
-  sort(unique(unlist(lapply(seq_len(nrow(d)), function(r) d$time[r] + ii[r] * seq(0, ad[r])))))
+  sort(unique(as.numeric(d$time)))
 }
 
 # Where each model occasion level starts for ONE study. Level k is active on

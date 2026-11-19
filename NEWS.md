@@ -18,22 +18,26 @@
   step: at the default 9 nodes the low band held 0.125 of the patients against
   an exact 0.129, and more nodes did not converge to it.
 
-* **Dosing phases are added together.** "5 days IV, then 16 days oral" is one
-  `doseBands()` per phase, added: `iv + oral`. The later phase gets a `start`,
-  and the phases may use different cut points (merged automatically). A plain
-  amount or an `rxode2::et()` table adds a dose everyone gets, such as a
-  loading dose. The one-call form with nested lists still works.
+* **`doseBands()` takes rxode2 as its input.** Each band's doses are built by
+  `rxode2::et()` itself, and every `et()` argument passes through (`evid`,
+  `ss`, `until`, units, ...). The accepted names are read from rxode2 at run
+  time, so an argument a later rxode2 adds works with no change to admixr2; a
+  misspelt one is still refused, since `et()` would silently ignore it. A band
+  may also be a whole `rxode2::et()` table, or a function returning one.
 
-* **`duration =` says how long to dose**, e.g. `duration = 120` for five days
-  at any interval, instead of counting `addl` per band. `addl` and rxode2's
-  `until` still work; note that `until` is inclusive, so `until = 120` with
-  `ii = 12` also doses at 120 h.
+* **Dosing phases combine as rxode2 event tables do.** "5 days IV, then 16
+  days oral" is one `doseBands()` per phase: `c(iv, oral)` (or
+  `seq(iv, oral)`) runs them in sequence per band through `rxode2::etSeq()`, so
+  the oral phase starts where the IV phase ends; `rbind(a, b)` merges them by
+  time through `rxode2::etRbind()`. Phases may use different cut points
+  (merged automatically). An amount or an `et()` table among them is a dose
+  everyone gets, such as a loading dose.
 
-* **A dose rule prints as the dosing table**, one row per band and dose, with
-  columns named as in `rxode2::et()`, both on its own and in `print()` of a
-  study. Unset values are shown as what they are: `time` 0, and `cmt` as the
-  model's default dosing compartment (`depot (default)` in `print()` of a
-  study, where the model is known).
+* **A dose rule prints as the event table rxode2 built**, one row per band and
+  dose, columns as `rxode2::et()` gives them, both on its own and in `print()`
+  of a study. Amounts that depend on a covariate show their rule (`5 x WT`,
+  `f(WT)`), an unset `cmt` shows as the default compartment (`depot (default)`
+  in `print()` of a study, where the model is known).
 
 * **An infusion that names no compartment, in an oral model, now warns.**
   Without `cmt` a dose goes to the model's first compartment, which in an oral
@@ -41,19 +45,21 @@
   absorbed orally with nothing to show for it. `admStudy()` now says so and
   names the model's compartments.
 
-## Other changes
-
-* **admixr2 now requires R >= 4.3.0**, for `chooseOpsMethod()`, which lets
-  `rxode2::et(...) + doseBands(...)` work: an event table is also a
-  data frame, and before R 4.3 R refused to choose between the two `+`
-  methods.
-
 * **admixr2 now says where a dose rule jumps or bends**, for a dose function of
   any number of covariates and for each band's own dose. The warning names the
   covariate and the value (`it jumps where CRCL is about 30`) and gives the
   `doseBands()` call that would make the split exact. It used to check only
   functions of a single covariate, so a step in a function of two covariates
   passed without a word.
+
+## Other changes
+
+* **admixr2 now requires R >= 4.3.0.**
+
+* **One definition of a dosing record.** Which event-table rows are doses
+  (rxode2's `evid` 1 and 4) was decided in five places that disagreed about
+  `evid` 5, 6 and 7 (replace, multiply, phantom); it is now decided in one, and
+  `addl` doses are expanded by `rxode2::etExpand()` rather than by hand.
 
 ## Changes that can move an existing fit
 

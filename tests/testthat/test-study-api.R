@@ -1127,7 +1127,7 @@ test_that("print() shows the dose rule", {
                                times = 1:2,
                                dose = doseBands(CRCL, 30, c(100, 200),
                                                 ii = 12, addl = 6))),
-                ">= 30 +200 +central \\(default\\) +12 +6")
+                ">= 30 +0 +central \\(default\\) +200 +12 +6")
   expect_output(print(admStudy(model = .sa_fitwt, population = pop, n = 10,
                                times = 1:2, dose = function(WT) 2 * WT)),
                 "dose = f\\(WT\\).*function\\(WT\\) 2 \\* WT")
@@ -1322,7 +1322,7 @@ test_that("doseBands(per = ) builds, prints and checks a mg/kg-by-band table", {
                "`per` multiplies numeric amounts")
   expect_error(doseBands(CRCL, 30, list(function() 5, 3)), "named arguments")
   expect_error(doseBands(CRCL, 30, list(function(...) 5, 3)), "named arguments")
-  expect_error(doseBands(CRCL, 30, list("a", 3)), "or a function of covariates")
+  expect_error(doseBands(CRCL, 30, list("a", 3)), "a function of covariates")
   # timing is still checked with a function band
   expect_error(doseBands(CRCL, 30, list(function(WT) WT, 3), ii = c(1, 2, 3)),
                "one per band")
@@ -1391,9 +1391,10 @@ test_that("a band's dose is checked at its nodes when the study is written", {
                "in band .*at WT = -")
   expect_s3_class(st(population = popn, range = list(WT = c(40, 110)),
                      dose = doseBands(CRCL, 30, c(5, 10), per = WT)), "admStudy")
-  expect_error(st(population = .sa_popwc,
-                  dose = doseBands(CRCL, 30, list(function(WT) rxode2::et(amt = WT), 1))),
-               "not an event table")
+  # a band's function may return a whole et() table
+  expect_s3_class(st(population = .sa_popwc,
+                     dose = doseBands(CRCL, 30, list(function(WT) rxode2::et(amt = WT), 1))),
+                  "admStudy")
   expect_error(st(population = admPopulation(CRCL = c(mean = 50, sd = 20)),
                   dose = doseBands(CRCL, 30, c(5, 10), per = WT)),
                "does not declare")
@@ -1448,84 +1449,119 @@ test_that("a step or a cap in a dose rule is found and named, for any covariates
   expect_warning(st(dose = doseBands(CRCL, 30, c(5, 10), per = WT)), NA)
 })
 
-# -- phases added with `+`, `start`/`duration`, the table print ----------------
+# -- rxode2 is the input: et() arguments, et() bands, c()/seq()/rbind() ------
 
 .sa_ev <- function(d, k, cov = list(WT = 70)) {
   x <- as.data.frame(admixr2:::.admDoseBandEv(d, k, cov))
-  x[x$evid != 0, intersect(c("time", "amt", "ii", "addl"), names(x)), drop = FALSE]
+  x[x$evid != 0, intersect(c("time", "amt", "ii", "addl", "evid"), names(x)),
+    drop = FALSE]
 }
 
-test_that("`duration` counts doses at any interval; `until` stays rxode2's", {
-  d <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
-                 per = WT, dur = 1, ii = c(24, 24, 12, 12), duration = 168)
-  expect_equal(vapply(1:4, function(k) .sa_ev(d, k)$addl, 0), c(6, 6, 13, 13))
-  # 5 days: last dose BEFORE 120 h at either interval
-  d5 <- doseBands(CRCL, 30, c(1, 2), ii = c(24, 12), duration = 120)
-  expect_equal(vapply(1:2, function(k) .sa_ev(d5, k)$addl, 0), c(4, 9))
-  # a duration shorter than one interval is one dose
-  expect_equal(nrow(.sa_ev(doseBands(CRCL, 30, c(1, 2), ii = 24, duration = 6), 1)), 1L)
-  # until passes straight through, inclusive as in rxode2
+test_that("doseBands() takes every et() argument, by rxode2's own list", {
+  ok <- admixr2:::.admEtArgs()
+  # read from rxode2, not written here: whatever et.default() takes
+  expect_identical(ok, setdiff(names(formals(utils::getS3method("et", "default"))),
+                               c("x", "...", "amt", "envir")))
+  expect_true(all(c("ii", "addl", "until", "evid", "ss", "rate", "dur") %in% ok))
+  # passed straight to et(): evid, units, until (inclusive, as in rxode2)
+  expect_equal(.sa_ev(doseBands(CRCL, 30, c(1, 2), evid = 4), 2)$evid, 4)
+  expect_s3_class(as.data.frame(admixr2:::.admDoseBandEv(
+    doseBands(CRCL, 30, c(1, 2), amountUnits = "mg"), 1))$amt, "units")
   expect_equal(.sa_ev(doseBands(CRCL, 30, c(1, 2), ii = 12, until = 120), 1)$addl, 10)
-  expect_error(doseBands(CRCL, 30, c(1, 2), duration = 120), "needs a dosing interval")
-  expect_error(doseBands(CRCL, 30, c(1, 2), ii = 12, until = 9, duration = 120),
-               "not both")
-  expect_error(doseBands(CRCL, 30, c(1, 2), ii = 12, duration = -1), "positive")
-  expect_error(doseBands(CRCL, 30, c(1, 2), time = 1, start = 2), "give one")
-  expect_equal(.sa_ev(doseBands(CRCL, 30, c(1, 2), start = 120), 2)$time, 120)
+  # a typo is refused (et() would ignore it), naming rxode2's arguments
+  expect_error(doseBands(CRCL, 30, c(1, 2), adl = 6), "not an rxode2::et\\(\\) argument")
+  # what a dose rule cannot be is read off the table et() built
+  expect_error(doseBands(CRCL, 30, c(1, 2), addSampling = TRUE), "observation")
+  expect_error(doseBands(CRCL, 30, c(1, 2), ii = 1, addl = 1, length.out = 3),
+               "holds no dose")
 })
 
-test_that("phases added with + give each band both regimens", {
+test_that("a band may be an et() table, or a function returning one", {
+  b <- doseBands(CRCL, 30, amt = list(
+    rxode2::et(amt = 100, ii = 24, addl = 6),
+    rxode2::et(amt = 400, dur = 1) |> rxode2::et(amt = 200, time = 12, ii = 12, addl = 12)))
+  expect_equal(.sa_ev(b, 2)$amt, c(400, 200))
+  expect_equal(.sa_ev(b, 2)$time, c(0, 12))
+  expect_error(doseBands(CRCL, 30, list(rxode2::et(amt = 1), 2), ii = 12),
+               "whole et\\(\\) table")
+  expect_error(doseBands(CRCL, 30, list(rxode2::et(amt = -1), 2)), "non-negative")
+  f <- doseBands(CRCL, 30, amt = list(function(WT) rxode2::et(amt = 5 * WT, ii = 24, addl = 2), 100))
+  expect_equal(.sa_ev(f, 1)[, c("amt", "addl")], data.frame(amt = 350, addl = 2),
+               ignore_attr = TRUE)
+  g <- doseBands(CRCL, 30, amt = list(function(WT) rxode2::et(amt = WT), 1), ii = 12, addl = 1)
+  expect_error(admixr2:::.admDoseBandEv(g, 1, list(WT = 70)), "carries its own timing")
+})
+
+test_that("c() and seq() run phases in sequence per band, as rxode2::etSeq() does", {
   iv   <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(1.25, 2.5, 2.5, 5),
-                    per = WT, dur = 1, ii = c(24, 24, 12, 12), duration = 120)
+                    per = WT, cmt = "centr", dur = 1, ii = c(24, 24, 12, 12),
+                    addl = c(4, 4, 9, 9))
   oral <- doseBands(CRCL, breaks = c(25, 50, 70), amt = c(5, 5, 10, 10),
-                    per = WT, cmt = "depot", ii = 24, start = 120, duration = 384)
-  d <- iv + oral
-  expect_s3_class(d, "admDoseBands")
+                    per = WT, cmt = "depot", ii = 24, addl = 15)
+  d <- c(iv, oral)
   expect_identical(admixr2:::.admDoseCovs(d), c("CRCL", "WT"))
-  # the same doses as the one-call nested-list form, in every band
-  lst <- doseBands(CRCL, breaks = c(25, 50, 70),
-                   amt = list(c(1.25, 5), c(2.5, 5), c(2.5, 10), c(5, 10)), per = WT,
-                   time = list(c(0, 120)), cmt = list(c("centr", "depot")),
-                   dur = list(c(1, 0)),
-                   ii = list(c(24, 24), c(24, 24), c(12, 24), c(12, 24)),
-                   addl = list(c(4, 15), c(4, 15), c(9, 15), c(9, 15)))
-  for (k in 1:4)
-    expect_equal(.sa_ev(d, k), .sa_ev(lst, k), ignore_attr = TRUE)
+  # each band is exactly etSeq() of the two phases' bands
+  for (k in 1:4) {
+    ref <- rxode2::etSeq(admixr2:::.admDoseBandEv(iv, k, list(WT = 70)),
+                         admixr2:::.admDoseBandEv(oral, k, list(WT = 70)))
+    expect_equal(as.data.frame(admixr2:::.admDoseBandEv(d, k, list(WT = 70))),
+                 as.data.frame(ref))
+  }
+  # the oral phase starts where the IV phase ends, at either interval
+  expect_equal(.sa_ev(d, 1)$time, c(0, 120))
+  expect_equal(.sa_ev(d, 4)$time, c(0, 120))
+  expect_equal(.sa_ev(seq(iv, oral), 3), .sa_ev(d, 3))
   # different cut points merge; each merged band takes its phases' bands
-  d2 <- iv + doseBands(CRCL, breaks = 30, amt = c(100, 200), cmt = "depot",
-                       start = 120)
+  d2 <- c(iv, doseBands(CRCL, breaks = 30, amt = c(100, 200), cmt = "depot"))
   expect_equal(d2$breaks, c(25, 30, 50, 70))
-  expect_equal(.sa_ev(d2, 2)$amt, c(175, 100))   # 25-30: iv 2.5 x 70, oral 100
-  expect_equal(.sa_ev(d2, 3)$amt, c(175, 200))   # 30-50: oral 200
-  # an amount or an et() table for everyone, on either side of `+`
-  expect_equal(.sa_ev(100 + doseBands(CRCL, 30, c(1, 2), start = 12), 2)$amt,
-               c(100, 2))
-  expect_equal(.sa_ev(rxode2::et(amt = 1000, dur = 1) +
-                        doseBands(CRCL, 30, c(250, 500), start = 12), 1)$amt,
-               c(1000, 250))
-  expect_equal(.sa_ev(doseBands(CRCL, 30, c(250, 500), start = 12) +
-                        rxode2::et(amt = 1000, dur = 1), 2)$amt,
-               c(1000, 500))
-  expect_error(iv + doseBands(WT, 60, c(1, 2)), "SAME covariate")
-  expect_error(iv + "a lot", "can be added")
+  expect_equal(.sa_ev(d2, 2)$amt, c(175, 100))    # 25-30
+  expect_equal(.sa_ev(d2, 3)$amt, c(175, 200))    # 30-50
+  # an amount or an et() table is a phase every band gets
+  expect_equal(.sa_ev(c(doseBands(CRCL, 30, c(1, 2)), rxode2::et(amt = 9)), 2)$amt,
+               c(2, 9))
+  expect_error(c(iv, doseBands(WT, 60, c(1, 2))), "SAME covariate")
+  expect_error(c(iv, "a lot"), "can be combined")
 })
 
-test_that("a dose rule prints as the dosing table", {
-  iv   <- doseBands(CRCL, breaks = 30, amt = c(2.5, 5), per = WT, dur = 1,
-                    ii = c(24, 12), duration = 120)
+test_that("rbind() merges phases by time, as rxode2::etRbind() does", {
+  po <- doseBands(CRCL, 30, c(500, 1000), cmt = "depot")
+  iv <- doseBands(CRCL, 30, c(100, 200), cmt = "centr", dur = 1)
+  r  <- rbind(po, iv)
+  for (k in 1:2)
+    expect_equal(as.data.frame(admixr2:::.admDoseBandEv(r, k)),
+                 as.data.frame(rxode2::etRbind(admixr2:::.admDoseBandEv(po, k),
+                                               admixr2:::.admDoseBandEv(iv, k))))
+  # a loading dose for everyone, the banded dose from 12 h
+  ld <- rbind(doseBands(CRCL, 30, c(250, 500), time = 12, ii = 12, addl = 2),
+              rxode2::et(amt = 1000, dur = 1))
+  expect_equal(.sa_ev(ld, 2)$time, c(0, 12))
+  expect_equal(.sa_ev(ld, 2)$amt, c(1000, 500))
+})
+
+test_that("a dose rule prints as the event table rxode2 built", {
+  iv   <- doseBands(CRCL, breaks = 30, amt = c(2.5, 5), per = WT, cmt = "centr",
+                    dur = 1, ii = c(24, 12), addl = c(4, 9))
   oral <- doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT, cmt = "depot",
-                    ii = 24, start = 120, duration = 384)
-  tab <- admixr2:::.admDoseTable(iv + oral)
-  expect_named(tab, c("CRCL", "amt", "cmt", "time", "dur", "ii", "duration"))
+                    ii = 24, addl = 15)
+  tab <- admixr2:::.admDoseTable(c(iv, oral))
+  # columns and order are rxode2's own
+  ref <- names(as.data.frame(admixr2:::.admDoseBandEv(c(iv, oral), 1, list(WT = 70))))
+  expect_identical(names(tab)[-1L], setdiff(ref, "evid"))
   expect_equal(tab$CRCL, c("< 30", "", ">= 30", ""))
   expect_equal(tab$amt, c("2.5 x WT", "5 x WT", "5 x WT", "10 x WT"))
-  # unset values are shown as what they are: time 0, the default compartment
   expect_equal(tab$time, c("0", "120", "0", "120"))
-  expect_equal(tab$cmt, c("(default)", "depot", "(default)", "depot"))
-  expect_equal(admixr2:::.admDoseTable(iv, default_cmt = "depot")$cmt,
-               c("depot (default)", "depot (default)"))
-  expect_output(print(iv + oral), "Dosing by CRCL band:")
-  # a function band prints its arguments
+  expect_output(print(c(iv, oral)), "Dosing by CRCL band:")
+  # an unset cmt is shown as the default compartment, next to time
+  t2 <- admixr2:::.admDoseTable(doseBands(CRCL, 30, c(100, 200)), default_cmt = "depot")
+  expect_equal(t2$cmt, c("depot (default)", "depot (default)"))
+  expect_identical(names(t2)[2:3], c("time", "cmt"))
+  # amounts are formatted one by one, units kept
+  expect_equal(admixr2:::.admDoseTable(c(doseBands(CRCL, 30, c(1, 2)),
+                                         rxode2::et(amt = 1000)))$amt,
+               c("1", "1000", "2", "1000"))
+  expect_match(admixr2:::.admDoseTable(doseBands(CRCL, 30, c(5, 10), per = WT,
+                                                 amountUnits = "mg"))$amt[1],
+               "5 x WT \\[mg\\]")
   expect_equal(admixr2:::.admDoseTable(doseBands(CRCL, 30,
     list(function(WT) 5 * WT, 300)))$amt, c("f(WT)", "300"))
 })
@@ -1537,10 +1573,10 @@ test_that("an infusion with no cmt into an oral depot warns; the table names it"
   w <- tryCatch(st(.sa_oral, iv), warning = conditionMessage)
   expect_match(w, "goes to the model's default dosing compartment, .depot.")
   expect_match(w, "cmt = \"centr\"", fixed = TRUE)
-  # the same through `+`, an et() table and a dose function
+  # the same through c(), an et() table and a dose function
   expect_warning(st(.sa_oral, rxode2::et(amt = 100, dur = 1)), "default dosing")
-  expect_warning(st(.sa_oral, iv + doseBands(CRCL, 30, c(1, 2), cmt = "depot",
-                                             start = 120)), "default dosing")
+  expect_warning(st(.sa_oral, c(iv, doseBands(CRCL, 30, c(1, 2), cmt = "depot"))),
+                 "default dosing")
   expect_warning(st(.sa_oral, function(WT) rxode2::et(amt = 2 * WT, dur = 1)),
                  "default dosing")
   # silent: a named compartment, a bolus (oral by default), an IV-only model
@@ -1553,15 +1589,15 @@ test_that("an infusion with no cmt into an oral depot warns; the table names it"
   expect_output(print(st(.sa_noccr, iv)), "central \\(default\\)")
 })
 
-test_that("phases added together expand and fit-check like one doseBands()", {
+test_that("combined phases expand and are checked like one doseBands()", {
   skip_if_not_installed("rxode2")
   iv   <- doseBands(CRCL, breaks = 30, amt = c(2.5, 5), per = WT, dur = 1,
-                    cmt = "centr", ii = c(24, 12), duration = 120)
+                    cmt = "centr", ii = c(24, 12), addl = c(4, 9))
   oral <- doseBands(CRCL, breaks = 30, amt = c(250, 500), cmt = "depot",
-                    ii = 24, start = 120, duration = 384)
+                    ii = 24, addl = 15)
   s <- admStudy(model = .sa_oral, population = .sa_popwc, n = 40,
-                times = c(1, 100, 200), strata_nodes = 3L, dose = iv + oral)
-  expect_output(print(s), ">= 30 +5 x WT")
+                times = c(1, 100, 200), strata_nodes = 3L, dose = c(iv, oral))
+  expect_output(print(s), ">= 30 +0 +centr +5 x WT")
   m <- admixr2:::.admMaterialise(admStudies(s = s))
   expect_equal(sum(vapply(m, function(x) x$n, 0)), 40, tolerance = 1e-8)
   for (x in m) {
@@ -1571,6 +1607,11 @@ test_that("phases added together expand and fit-check like one doseBands()", {
                  tolerance = 1e-10)
     expect_equal(e$time, c(0, 120))
   }
+  # IOV dose times come from rxode2::etExpand()
+  expect_equal(admixr2:::.admEtDoseTimes(rxode2::et(amt = 1, ii = 24, addl = 3)),
+               c(0, 24, 48, 72))
+  # the step/cap check totals the event table, addl doses included
+  expect_equal(admixr2:::.admDoseTotal(rxode2::et(amt = 10, ii = 12, addl = 4)), 50)
 })
 
 test_that(".admDoseRoughAlong tells a step from a kink from a smooth curve", {
