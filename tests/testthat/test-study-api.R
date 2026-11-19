@@ -1304,3 +1304,161 @@ test_that("doseBands gives several simultaneous doses per band, per-band cmt", {
                c("depot", "centr"), ignore_attr = TRUE)
   expect_match(format(doseBands(CRCL, 30, list(c(1, 2), 3))), "1+2", fixed = TRUE)
 })
+
+# -- a band's dose that itself depends on a covariate (per = WT, functions) ----
+
+.sa_popwc <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 50, sd = 20),
+                           cor = c(WT.CRCL = 0.6))
+
+test_that("doseBands(per = ) builds, prints and checks a mg/kg-by-band table", {
+  b <- doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT)
+  expect_identical(b$per, "WT")
+  expect_identical(doseBands(CRCL, 30, c(5, 10), per = "WT"), b)
+  expect_identical(format(b), "CRCL < 30: 5 x WT; CRCL >= 30: 10 x WT")
+  expect_identical(format(doseBands(CRCL, 30, list(function(WT) 5 * WT, 300))),
+                   "CRCL < 30: f(WT); CRCL >= 30: 300")
+  expect_identical(admixr2:::.admDoseCovs(b), c("CRCL", "WT"))
+  expect_error(doseBands(CRCL, 30, list(function(WT) 5 * WT, 3), per = WT),
+               "`per` multiplies numeric amounts")
+  expect_error(doseBands(CRCL, 30, list(function() 5, 3)), "named arguments")
+  expect_error(doseBands(CRCL, 30, list(function(...) 5, 3)), "named arguments")
+  expect_error(doseBands(CRCL, 30, list("a", 3)), "or a function of covariates")
+  # timing is still checked with a function band
+  expect_error(doseBands(CRCL, 30, list(function(WT) WT, 3), ii = c(1, 2, 3)),
+               "one per band")
+})
+
+test_that("doseBands(per = WT) splits exactly at the band and conditions WT on it", {
+  skip_if_not_installed("rxode2")
+  s <- admStudy(model = .sa_noccr, population = .sa_popwc, n = 100,
+                times = c(1, 2, 4), strata_nodes = 4L,
+                dose = doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT))
+  m <- admixr2:::.admMaterialise(admStudies(s = s))
+  b1 <- grep("_CRCLb1m", names(m), value = TRUE)
+  b2 <- grep("_CRCLb2m", names(m), value = TRUE)
+  expect_length(b1, 16L); expect_length(b2, 16L)  # CRCL x WT nodes per band
+  nn <- vapply(m, function(x) x$n, 0)
+  wt <- vapply(m, function(x) x$cov$WT, 0)
+  cr <- vapply(m, function(x) x$cov$CRCL, 0)
+  # the band edge is EXACT: n splits by P(CRCL < 30) from the declared margin
+  spec <- admixr2:::.admCovDistCanon(.sa_popwc)$CRCL
+  p1 <- stats::plnorm(30, spec$meanlog, spec$sdlog)
+  expect_equal(sum(nn[b1]), 100 * p1, tolerance = 1e-6)
+  expect_equal(sum(nn[b2]), 100 * (1 - p1), tolerance = 1e-6)
+  expect_true(all(cr[b1] < 30) && all(cr[b2] >= 30))
+  # each node's dose is its band's mg/kg times its WT
+  amt <- vapply(m, function(x) as.data.frame(x$ev)$amt[1], 0)
+  expect_equal(amt[b1], 5 * wt[b1]); expect_equal(amt[b2], 10 * wt[b2])
+  # WT is conditioned on the band through the full-margin latent: the joint
+  # grid over (CRCL, WT) put E[WT] at 75 in BOTH bands against 63.9 / 76.6
+  X <- covDraw(admixr2:::.admCovDistCanon(.sa_popwc), n = 200000L)
+  wm <- function(i) sum(nn[i] * wt[i]) / sum(nn[i])
+  expect_equal(wm(b1), mean(X[X[, "CRCL"] < 30, "WT"]), tolerance = 0.01)
+  expect_equal(wm(b2), mean(X[X[, "CRCL"] >= 30, "WT"]), tolerance = 0.01)
+})
+
+test_that("a band's function is cut into nodes; a numeric band stays one study", {
+  skip_if_not_installed("rxode2")
+  pop <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 50, sd = 20))
+  f <- function(WT) pmin(10 * WT, 900)
+  s <- suppressWarnings(admStudy(
+    model = .sa_noccr, population = pop, n = 100, times = c(1, 2, 4),
+    strata_nodes = 5L,
+    dose = doseBands(CRCL, breaks = 30, amt = list(300, f), ii = 24, addl = 2)))
+  m <- admixr2:::.admMaterialise(admStudies(s = s))
+  expect_true("s_CRCLb1" %in% names(m))           # plain amount: one study
+  b2 <- grep("_CRCLb2m", names(m), value = TRUE)
+  expect_length(b2, 5L)                            # CRCL independent: WT nodes only
+  expect_equal(sum(vapply(m, function(x) x$n, 0)), 100, tolerance = 1e-8)
+  for (nm in b2) {
+    d <- as.data.frame(m[[nm]]$ev)
+    expect_equal(d$amt[1], f(m[[nm]]$cov$WT))
+    expect_equal(c(d$ii[1], d$addl[1]), c(24, 2))
+  }
+  # CRCL still varies inside the band, truncated to it
+  q <- m[[b2[1]]]$cov_dist$CRCL$quantile(c(0.001, 0.999))
+  expect_true(all(q >= 30))
+})
+
+test_that("a band's dose is checked at its nodes when the study is written", {
+  popn <- suppressWarnings(admPopulation(WT = c(mean = 70, sd = 20),
+                                         CRCL = c(mean = 50, sd = 20),
+                                         dist = "normal"))
+  st <- function(...) admStudy(model = .sa_noccr, n = 10, times = 1:2, ...)
+  # a NORMAL weight's tail node is below 0 kg: named by band and node
+  expect_error(st(population = popn,
+                  dose = doseBands(CRCL, 30, c(5, 10), per = WT)),
+               "in band .*at WT = -")
+  expect_s3_class(st(population = popn, range = list(WT = c(40, 110)),
+                     dose = doseBands(CRCL, 30, c(5, 10), per = WT)), "admStudy")
+  expect_error(st(population = .sa_popwc,
+                  dose = doseBands(CRCL, 30, list(function(WT) rxode2::et(amt = WT), 1))),
+               "not an event table")
+  expect_error(st(population = admPopulation(CRCL = c(mean = 50, sd = 20)),
+                  dose = doseBands(CRCL, 30, c(5, 10), per = WT)),
+               "does not declare")
+  expect_error(st(population = .sa_popwc, at = list(WT = 70),
+                  dose = doseBands(CRCL, 30, c(5, 10), per = WT)), "`at` pins")
+})
+
+test_that("a dose function with a range on a correlated covariate conditions on it", {
+  skip_if_not_installed("rxode2")
+  # the joint grid mapped the truncated CRCL through its own uniform, so WT
+  # never felt the range: E[WT] came out at the population 75 against 67.6
+  s <- admStudy(model = .sa_noccr, population = .sa_popwc, n = 100,
+                times = c(1, 2, 4), strata_nodes = 5L,
+                range = list(CRCL = c(15, 40)),
+                dose = function(WT, CRCL) 2 * WT + CRCL)
+  m <- admixr2:::.admMaterialise(admStudies(s = s))
+  nn <- vapply(m, function(x) x$n, 0)
+  xy <- cbind(vapply(m, function(x) x$cov$WT, 0), vapply(m, function(x) x$cov$CRCL, 0))
+  X <- covDraw(admixr2:::.admCovDistCanon(.sa_popwc), n = 200000L)
+  X <- X[X[, "CRCL"] >= 15 & X[, "CRCL"] <= 40, ]
+  expect_equal(sum(nn * xy[, 1]) / sum(nn), mean(X[, "WT"]), tolerance = 0.01)
+  expect_equal(sum(nn * xy[, 2]) / sum(nn), mean(X[, "CRCL"]), tolerance = 0.01)
+  expect_equal(stats::cov.wt(xy, wt = nn / sum(nn), cor = TRUE)$cor[1, 2],
+               stats::cor(X[, "WT"], X[, "CRCL"]), tolerance = 0.02)
+})
+
+test_that("a step or a cap in a dose rule is found and named, for any covariates", {
+  st <- function(...) admStudy(model = .sa_noccr, n = 10, times = 1:2,
+                               population = .sa_popwc, ...)
+  # a step in CRCL under a dose of WT and CRCL used to pass silently
+  w <- tryCatch(st(dose = function(WT, CRCL) ifelse(CRCL < 30, 5, 10) * WT),
+                warning = function(w) conditionMessage(w))
+  expect_match(w, "jumps where CRCL is about 30 ")
+  expect_match(w, "doseBands(CRCL, breaks = 30,", fixed = TRUE)
+  expect_warning(st(dose = function(WT) pmin(15 * WT, 1100)),
+                 "bends sharply where WT")
+  # smooth rules, one or several covariates, et() or not: silent
+  expect_warning(st(dose = function(WT, CRCL) 2 * WT + CRCL), NA)
+  expect_warning(st(dose = function(WT, CRCL)
+    rxode2::et(amt = 2 * WT + CRCL, ii = 12, addl = 3)), NA)
+  expect_warning(admStudy(model = .sa_fitwt, n = 10, times = 1:2,
+                          population = admPopulation(WT = c(mean = 75, sd = 16),
+                                                     SEX = c(male = 0.4)),
+                          dose = function(WT, SEX) 2 * WT * (1 + 0.1 * SEX)), NA)
+  # a step written as et() is found point by point
+  expect_warning(st(dose = function(CRCL) rxode2::et(amt = if (CRCL < 30) 100 else 200)),
+                 "jumps where CRCL is about 30 ")
+  # inside a band, the warning names the band
+  expect_warning(st(dose = doseBands(CRCL, 30, list(function(WT) 5 * WT,
+                                                    function(WT) pmin(10 * WT, 750)))),
+                 "the dose in band .CRCL >= 30. is not smooth: it bends")
+  expect_warning(st(dose = doseBands(CRCL, 30, c(5, 10), per = WT)), NA)
+})
+
+test_that(".admDoseRoughAlong tells a step from a kink from a smooth curve", {
+  x <- seq(10, 100, length.out = 101)
+  along <- admixr2:::.admDoseRoughAlong
+  expect_null(along(x, 2 * x))
+  expect_null(along(x, x^0.75))
+  expect_null(along(x, exp(x / 50)))
+  expect_null(along(x, rep(5, 101)))
+  expect_identical(along(x, ifelse(x < 40, 1, 2))$kind, "step")
+  expect_identical(along(x, ifelse(x < 40, x, 2 * x))$kind, "step")
+  k <- along(x, pmin(15 * x, 900))
+  expect_identical(k$kind, "kink")
+  expect_lt(abs(k$at - 60), x[2] - x[1] + 1e-8)
+  expect_null(along(x, c(NA, 2 * x[-1])))
+})

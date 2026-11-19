@@ -4,7 +4,7 @@
 \alias{doseBands}
 \title{A dosing table by covariate band}
 \usage{
-doseBands(covariate, breaks, amt, ...)
+doseBands(covariate, breaks, amt, ..., per = NULL)
 }
 \arguments{
 \item{covariate}{The covariate the bands are cut on, bare or quoted
@@ -15,11 +15,18 @@ the study's \code{population}.}
 
 \item{amt}{Amount for each band, lowest band first; one more than \code{breaks}.
 A band that gets several doses at once (an oral dose plus an infusion) takes
-a list, one element per band, each holding that band's amounts.}
+a list, one element per band, each holding that band's amounts. A list
+element may instead be a function of covariates returning the band's
+amount(s), e.g. \code{function(WT) 5 * WT}.}
 
 \item{...}{How each dose is given, as \code{\link[rxode2:et]{rxode2::et()}} arguments: \code{time},
 \code{cmt}, \code{ii}, \code{addl}, \code{dur}, \code{rate}, \code{ss}, \code{until}; length 1 (all bands) or
 one per band. Without them each band gets one bolus at time 0.}
+
+\item{per}{Optional covariate every amount is given per unit of, bare or
+quoted: \code{per = WT} reads \code{amt = c(5, 10)} as 5 and 10 mg/kg. It must be
+declared in the study's \code{population}. For a cap or any other formula use
+functions in \code{amt} instead.}
 }
 \value{
 An \code{admDoseBands} object, to pass as \code{dose} to \code{\link[=admStudy]{admStudy()}}.
@@ -36,18 +43,32 @@ bands cover the whole range with no gaps. A value equal to a cut point falls
 in the band above it. Anything else about how each dose is given ---
 \code{ii}, \code{addl}, \code{dur}, \code{rate}, \code{cmt}, ... --- is written as in \code{\link[rxode2:et]{rxode2::et()}}.
 Each is one value, shared by every band, or one value per band, so the
-regimen itself can depend on the covariate (\code{ii = c(24, 12)}). For anything
-Several simultaneous doses in a band: give \code{amt} as a list and the per-dose
-details as vectors inside lists (a length-1 list is shared by all bands), e.g.
-\verb{amt = list(c(500, 100), c(1000, 200)), cmt = list(c("depot", "centr")), dur = list(c(0, 1))}. For anything
-that is a formula of a covariate, pass a function as \code{dose} that returns an
-\code{\link[rxode2:et]{rxode2::et()}} table.
+regimen itself can depend on the covariate (\code{ii = c(24, 12)}).
 
-The study is expanded into one study per band: the covariate restricted to
-the band (and to the study's enrolled \code{range}, if given), \code{n} split by the
-band's share of the population, and that band's dose, so the analysis model
-needs no dose rule. Covariates correlated with the banded one are conditioned
-on the band.
+Several doses in a band (an oral dose plus an infusion, or an IV phase
+followed by an oral phase): give \code{amt} as a list and the per-dose details as
+vectors inside lists (a length-1 list is shared by all bands), e.g.
+\verb{amt = list(c(500, 100), c(1000, 200)), cmt = list(c("depot", "centr")), dur = list(c(0, 1))}.
+
+\strong{A band's dose may itself depend on a covariate}, e.g. "CrCl below 30:
+5 mg/kg, otherwise 10 mg/kg":
+\itemize{
+\item \code{per = WT} makes every amount a dose per unit of \code{WT}:
+\code{doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT)};
+\item for any other formula, give a band a function of the covariates it reads,
+returning that band's amount(s): \code{amt = list(function(WT) 5 * WT, function(WT) pmin(10 * WT, 1000))}. Bands may mix numbers and functions.
+}
+
+The band edges stay exact either way; only the covariate the dose is
+proportional to is cut into \code{strata_nodes} nodes inside each band. Write a
+step in the banded covariate this way rather than as \code{ifelse()} in a dose
+function, which nodes can only approximate.
+
+The study is expanded into one study per band (and per node, where a band's
+dose reads a covariate): the covariate restricted to the band (and to the
+study's enrolled \code{range}, if given), \code{n} split by the band's share of the
+population, and that band's dose, so the analysis model needs no dose rule.
+Covariates correlated with the banded one are conditioned on the band.
 }
 \examples{
 doseBands(CRCL, breaks = 30, amt = c(100, 200))
@@ -62,7 +83,17 @@ doseBands(CRCL, breaks = c(25, 40, 60), amt = c(450, 450, 450, 900),
 # an oral dose AND a 1-h infusion at the same time, in every band
 doseBands(CRCL, breaks = 30, amt = list(c(500, 100), c(1000, 200)),
           cmt = list(c("depot", "centr")), dur = list(c(0, 1)))
-# a formula of the covariate instead: any et() argument may read it
+# 5 days of IV (daily 1-h infusions) followed by 16 days oral, per band
+doseBands(CRCL, breaks = 30, amt = list(c(500, 250), c(1000, 500)),
+          time = list(c(0, 120)), cmt = list(c("centr", "depot")),
+          dur = list(c(1, 0)), ii = 24, addl = list(c(4, 15)))
+# mg/kg, with the mg/kg depending on the band
+doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT)
+# any formula per band: 5 mg/kg below 30, 10 mg/kg capped at 1 g above
+doseBands(CRCL, breaks = 30,
+          amt = list(function(WT) 5 * WT, function(WT) pmin(10 * WT, 1000)))
+# a formula with no step needs no bands: give `dose` a function, and any
+# et() argument may read the covariates
 f <- function(WT, CRCL) {
   rxode2::et(amt = 5 * WT, cmt = "depot") |>
     rxode2::et(amt = 2 * WT, cmt = "centr", dur = 1, ii = 12 + CRCL / 10, addl = 3)
@@ -71,5 +102,5 @@ f <- function(WT, CRCL) {
 }
 \seealso{
 \code{\link[=admStudy]{admStudy()}}; a function of covariates as \code{dose} for dosing that is
-proportional to (or a formula of) a covariate, e.g. mg/kg.
+a smooth formula of covariates with no step, e.g. mg/kg for everyone.
 }

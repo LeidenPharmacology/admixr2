@@ -53,7 +53,8 @@ dataset uses. One of:
 write for one subject, with the covariates as its arguments:
 \code{dose = function(WT) 2 * WT} for 2 mg/kg, or
 \code{dose = function(WT) rxode2::et(amt = pmin(15 * WT, 2000), ii = 12, addl = 6, dur = 1)} for a capped mg/kg infusion every 12 h;
-\item a dosing table by covariate band, \code{dose = doseBands(CRCL, breaks = 30, amt = c(100, 200))} --- see \code{\link[=doseBands]{doseBands()}}.
+\item a dosing table by covariate band, \code{dose = doseBands(CRCL, breaks = 30, amt = c(100, 200))} --- see \code{\link[=doseBands]{doseBands()}}. A band's dose may itself
+depend on a covariate: \code{doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT)} for 5 or 10 mg/kg by CrCl band.
 }
 
 A function or a table expands the study into one study per dose group,
@@ -63,7 +64,8 @@ the covariates it reads, each node a study with its share of \code{n}; a table
 splits the population exactly at its band edges, which nodes cannot do for
 a stepwise rule, so write a step as \code{doseBands()}, not as an \code{ifelse()} in
 a function (a kink such as a cap, \code{pmin(15 * WT, 2000)}, is likewise only
-approximated unless \code{strata_nodes} is raised). Covariates correlated with the dosing ones are conditioned
+approximated unless \code{strata_nodes} is raised). admixr2 warns, naming the
+covariate and where, when a dose rule jumps or bends sharply. Covariates correlated with the dosing ones are conditioned
 on each node or band. A \code{range} on a dosing covariate gives the enrolled
 span, and the groups are cut inside it. Both need a published or simulated
 \code{model}: a digitised pooled \code{E}/\code{V} cannot be split into per-dose profiles.}

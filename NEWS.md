@@ -1,3 +1,41 @@
+# admixr2 (development version)
+
+## New features
+
+* **A dosing table whose doses depend on a covariate.** `doseBands()` now
+  transcribes rules such as "CrCl below 30: 5 mg/kg, otherwise 10 mg/kg":
+  - `doseBands(CRCL, breaks = 30, amt = c(5, 10), per = WT)` reads every amount
+    as a dose per unit of `WT`;
+  - for a cap or any other formula, give a band a function of the covariates
+    it reads: `amt = list(function(WT) 5 * WT, function(WT) pmin(10 * WT, 1000))`.
+    Bands may mix numbers and functions, and the timing arguments (`ii`, `addl`,
+    `dur`, ...) apply as before.
+
+  The band edges stay exact. Only the covariate the dose is proportional to is
+  cut into `strata_nodes` nodes inside each band, and it is conditioned on the
+  band when the two covariates are correlated. Writing the same rule as
+  `ifelse(CRCL < 30, 5, 10) * WT` in a dose function only approximates the
+  step: at the default 9 nodes the low band held 0.125 of the patients against
+  an exact 0.129, and more nodes did not converge to it.
+
+* **admixr2 now says where a dose rule jumps or bends**, for a dose function of
+  any number of covariates and for each band's own dose. The warning names the
+  covariate and the value (`it jumps where CRCL is about 30`) and gives the
+  `doseBands()` call that would make the split exact. It used to check only
+  functions of a single covariate, so a step in a function of two covariates
+  passed without a word.
+
+## Changes that can move an existing fit
+
+* **A dose function of correlated covariates with a `range` on one of them now
+  conditions the others on that range.** The truncated covariate was laid into
+  the node grid through its own position within the range rather than its place
+  in the full distribution, so its correlated partner did not shift at all:
+  with CRCL restricted to 15–40 and a WT–CRCL correlation of 0.6, the WT nodes
+  averaged 75 kg against 67.6 kg from the full distribution. Such studies are
+  now conditioned in sequence (the ranged covariate first), which is exact;
+  every other dose function keeps its previous nodes bit for bit.
+
 # admixr2 0.4.2
 
 ## New features
