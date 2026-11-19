@@ -178,16 +178,20 @@ format.admDoseBands <- function(x, ...) {
   a <- vapply(x$amt, function(v) {
     if (is.function(v))
       return(paste0("f(", paste(names(formals(v)), collapse = ", "), ")"))
-    s <- vapply(v, format, "")
-    if (!is.null(x$per)) s <- paste0(s, " x ", x$per)
-    paste(s, collapse = "+")
+    s <- paste(vapply(v, format, ""), collapse = "+")
+    if (!is.null(x$per))
+      s <- paste0(if (length(v) > 1L) paste0("(", s, ")") else s, " x ", x$per)
+    s
   }, "")
   lab <- paste0(vapply(seq_len(k), function(j) .admDoseBandWhere(x, j), ""),
                 ": ", a)
   out <- paste(lab, collapse = "; ")
   if (length(x$timing))
     out <- paste0(out, "  (", paste(sprintf("%s = %s", names(x$timing),
-      vapply(x$timing, function(v) paste(format(v, trim = TRUE), collapse = ","),
+      vapply(x$timing, function(v)
+        if (is.list(v)) paste(vapply(v, function(e)
+          paste(format(e, trim = TRUE), collapse = ","), ""), collapse = " | ")
+        else paste(format(v, trim = TRUE), collapse = ","),
              character(1))), collapse = ", "), ")")
   out
 }
