@@ -2130,6 +2130,122 @@ test_that("a truncated margin is cut on the span, by recombination", {
   expect_true(all(wt >= 55 & wt <= 105))
 })
 
+test_that("the truncated cloud is drawn from the box-truncated law", {
+  # Rotating a grid by chol(R) and reading each truncated margin through its
+  # own uniform put the correlation INSIDE the bands: along a model direction
+  # the spread came out 6% too wide, and a correlated partner never felt the
+  # range. The atoms now come from the correlated normal truncated to the box.
+  pop <- .pnd_pop()
+  rng <- list(WT = c(55, 105), CRCL = c(60, 130), ALB = c(31, 49))
+  cd  <- admixr2:::.admCovApplyRange(admixr2:::.admCovDistCanon(pop), rng)
+  cn  <- c("WT", "CRCL", "ALB")
+  R   <- admixr2:::.admCovDistCanon(pop)$latentR
+  dimnames(R) <- rep(list(admixr2:::.admCovSpecNames(admixr2:::.admCovDistCanon(pop))), 2L)
+  cl  <- admixr2:::.admCovCloud(cd, cn, R[cn, cn], diag(3L), 15L)
+  X   <- covDraw(admixr2:::.admCovDistCanon(pop), n = 400000L)
+  s   <- rep(TRUE, nrow(X))
+  for (v in cn) s <- s & X[, v] >= rng[[v]][1L] & X[, v] <= rng[[v]][2L]
+  LX  <- log(X[s, cn])
+  mu  <- colSums(cl$su * cl$w)
+  sdv <- sqrt(colSums(sweep(cl$su, 2L, mu)^2 * cl$w))
+  expect_equal(sum(cl$w), 1, tolerance = 1e-12)
+  expect_equal(mu, colMeans(LX), tolerance = 2e-4, ignore_attr = TRUE)
+  expect_equal(sdv, apply(LX, 2L, stats::sd), tolerance = 0.01, ignore_attr = TRUE)
+  # the WT-CRCL dependence survives inside the box
+  r12 <- sum(cl$w * (cl$su[, 1] - mu[1]) * (cl$su[, 2] - mu[2])) / (sdv[1] * sdv[2])
+  expect_equal(r12, stats::cor(LX[, 1], LX[, 2]), tolerance = 0.02)
+  # untruncated, the old construction is kept bit for bit
+  cd0 <- admixr2:::.admCovDistCanon(pop)
+  g0  <- admixr2:::.adghNodeGrid(5L, 3L)
+  z0  <- g0$X %*% chol(R[cn, cn])
+  expect_identical(admixr2:::.admCovCloud(cd0, cn, R[cn, cn], diag(3L), 5L)$z, z0)
+})
+
+test_that("the order `range` is written in does not change the strata", {
+  # the stage that weighed a covariate by P(in range | node) did not always cut
+  # it next, so an independent AGE listed before the coupled WT left WT
+  # unconditioned: E[WT] 57.54 against 60.46
+  pop <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 50, sd = 20),
+                       AGE = c(mean = 60, sd = 12), cor = c(WT.CRCL = 0.6))
+  f <- function(cr) {
+    st <- admixr2:::.admCovStrata(pop, c("CRCL", "WT", "AGE"), 7L,
+                                  warn_range = FALSE, cov_range = cr)
+    w  <- vapply(st, function(z) z$weight, 0)
+    colSums(t(vapply(st, function(z) unlist(z$cov[c("WT", "CRCL", "AGE")]),
+                     numeric(3))) * w)
+  }
+  a <- f(list(CRCL = c(-Inf, 30), WT = c(40, 70), AGE = c(30, 80)))
+  b <- f(list(CRCL = c(-Inf, 30), AGE = c(30, 80), WT = c(40, 70)))
+  expect_equal(a, b, tolerance = 1e-8)
+  X <- covDraw(admixr2:::.admCovDistCanon(pop), n = 400000L)
+  s <- X[, "CRCL"] <= 30 & X[, "WT"] >= 40 & X[, "WT"] <= 70 &
+       X[, "AGE"] >= 30 & X[, "AGE"] <= 80
+  expect_equal(a, colMeans(X[s, c("WT", "CRCL", "AGE")]), tolerance = 0.003,
+               ignore_attr = TRUE)
+})
+
+test_that("a range on a correlated covariate that is NOT stratified conditions the strata", {
+  # AGE is marginalised, but its range reaches CRCL (rho -0.6) and through it
+  # WT: E[WT] stayed at 67.63 against 70.57
+  pop <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 50, sd = 20),
+                       AGE = c(mean = 60, sd = 12),
+                       cor = c(WT.CRCL = 0.6, CRCL.AGE = -0.6))
+  st <- admixr2:::.admCovStrata(pop, c("CRCL", "WT"), 7L, warn_range = FALSE,
+                                cov_range = list(CRCL = c(15, 40), AGE = c(70, 90)))
+  X  <- covDraw(admixr2:::.admCovDistCanon(pop), n = 400000L)
+  s  <- X[, "CRCL"] >= 15 & X[, "CRCL"] <= 40 & X[, "AGE"] >= 70 & X[, "AGE"] <= 90
+  w  <- vapply(st, function(z) z$weight, 0)
+  M  <- t(vapply(st, function(z) unlist(z$cov[c("WT", "CRCL")]), numeric(2)))
+  expect_equal(colSums(M * w), colMeans(X[s, c("WT", "CRCL")]), tolerance = 0.003,
+               ignore_attr = TRUE)
+  # ...and each node carries AGE on its conditional law, inside its range
+  ag <- vapply(st, function(z) {
+    a <- covDraw(admixr2:::.admCovDistCanon(z$cov_dist), n = 2000L)[, "AGE"]
+    c(mean(a), min(a), max(a))
+  }, numeric(3))
+  expect_equal(sum(w * ag[1, ]), mean(X[s, "AGE"]), tolerance = 0.003)
+  expect_true(min(ag[2, ]) >= 70 - 1e-6 && max(ag[3, ]) <= 90 + 1e-6)
+  # a single stratified covariate is reweighted the same way
+  st1 <- admixr2:::.admCovStrata(pop, "WT", 7L, warn_range = FALSE,
+                                 cov_range = list(AGE = c(70, 90)))
+  s1  <- X[, "AGE"] >= 70 & X[, "AGE"] <= 90
+  expect_equal(sum(vapply(st1, function(z) z$weight * z$cov$WT, 0)),
+               mean(X[s1, "WT"]), tolerance = 0.003)
+})
+
+test_that("band shares follow every range the correlation connects", {
+  # HT is correlated with WT only; its range still moves patients between CRCL
+  # bands through WT, and was dropped
+  pop <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 50, sd = 20),
+                       HT = c(mean = 172, sd = 9), cor = c(WT.CRCL = 0.5, WT.HT = 0.7))
+  cd  <- admixr2:::.admCovDistCanon(pop)
+  X   <- covDraw(cd, n = 400000L)
+  bands <- list(c(-Inf, 30), c(30, Inf))
+  for (cr in list(list(WT = c(40, 80), HT = c(150, 165)),
+                  list(HT = c(150, 165), WT = c(40, 80)))) {
+    sh <- admixr2:::.admDoseBandShares(cd, "CRCL", bands, cr)
+    s  <- X[, "WT"] >= 40 & X[, "WT"] <= 80 & X[, "HT"] >= 150 & X[, "HT"] <= 165
+    expect_equal(sh[1], mean(X[s, "CRCL"] < 30), tolerance = 0.01)
+  }
+  # one directly correlated range keeps its exact integral
+  sw <- admixr2:::.admDoseBandShares(cd, "CRCL", bands, list(WT = c(40, 80)))
+  s  <- X[, "WT"] >= 40 & X[, "WT"] <= 80
+  expect_equal(sw[1], mean(X[s, "CRCL"] < 30), tolerance = 0.01)
+})
+
+test_that("a near-degenerate truncated cloud has no NaN atoms", {
+  # an underflowed band probability made a +/-Inf coordinate and a NaN next one
+  pop <- admPopulation(A = c(mean = 10, sd = 2), B = c(mean = 10, sd = 2),
+                       C = c(mean = 10, sd = 2),
+                       cor = c(A.B = 0.99, B.C = 0.3, A.C = 0.3))
+  cd0 <- admixr2:::.admCovDistCanon(pop)
+  cd  <- admixr2:::.admCovApplyRange(cd0, list(A = c(5, 12), B = c(4, 7.5),
+                                               C = c(6, 14)))
+  cl  <- admixr2:::.admCovCloud(cd, c("A", "B", "C"), cd0$latentR, diag(3L), 15L)
+  expect_true(all(is.finite(cl$su)) && all(is.finite(cl$z)))
+  expect_equal(sum(cl$w), 1, tolerance = 1e-12)
+})
+
 test_that("the projected design crosses the exact discrete enumeration", {
   skip_on_cran(); skip_if_not_installed("rxode2")
   # A discrete margin is enumerated, not projected -- it is latently independent

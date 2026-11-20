@@ -145,7 +145,7 @@ test_that("a rank-THREE TRUNCATED span is declined, on its own criterion", {
   skip_on_cran(); skip_if_not_installed("rxode2")
   # The cloud converges here (2.4e-04 to 1.4e-05 over j) but only 20 atoms are
   # retained at this resolution, and 20 atoms do not carry a three-dimensional
-  # truncated measure: the recombination sits at ~3e-02 against a 1e-3
+  # truncated measure: the recombination sits at 2e-02 to 6e-02 against a 5e-3
   # tolerance at every j. So the certificate refuses it, and refusing means the
   # product grid rather than a rule that is quietly 30x out.
   rng <- list(WT = c(55, 105), CRCL = c(60, 130),
@@ -195,7 +195,7 @@ test_that("admission certifies the resolution the source ASKED for", {
   # and where it does certify, it is the requested resolution that was used
   sp <- adm(9L)
   expect_false(is.null(sp))
-  expect_lt(sp$recomb_err, 1e-2)
+  expect_lt(sp$recomb_err, 5e-3)
   expect_equal(admixr2:::.admStrataNodes(list(strata_nodes = 3L)), 3L)
   expect_equal(admixr2:::.admStrataNodes(list()), admixr2:::.ADM_STRATA_NODES)
 

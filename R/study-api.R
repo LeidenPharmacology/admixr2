@@ -733,7 +733,7 @@ admStudy <- function(model = NULL, est = NULL,
         .crk <- utils::modifyList(as.list(.nrng %||% list()),
                                   stats::setNames(list(.span), .bcv))
         .stl <- tryCatch(
-          .admDoseStrata(population, .S, .nn, .crk),
+          .admCovStrata(population, .S, .nn, warn_range = FALSE, cov_range = .crk),
           error = function(e) bad("could not cut ", paste(.S, collapse = ", "),
                                   " into dose groups inside band ",
                                   sQuote(.admDoseBandWhere(dose, .k)), ": ",
@@ -771,7 +771,7 @@ admStudy <- function(model = NULL, est = NULL,
       if (!length(.rng)) .rng <- NULL
       .dsk <- list(population, .dcv, strata_nodes %||% .ADM_STRATA_NODES, .rng)
       .stl <- tryCatch(
-        .admDoseStrata(population, .dcv, .dsk[[3L]], .rng),
+        .admCovStrata(population, .dcv, .dsk[[3L]], warn_range = FALSE, cov_range = .rng),
         error = function(e) bad("could not cut ", paste(.dcv, collapse = ", "),
                                 " into dose groups: ", conditionMessage(e)))
       for (.nd in .stl)
@@ -1253,8 +1253,8 @@ print() a single study to check its transcription.
           for (kk in names(g)) add(kk, g[[kk]])
           next
         }
-        stl <- .admDoseStrata(s$population, .S, .admStrataNodes(s),
-                              spb$cov_range)
+        stl <- .admCovStrata(s$population, .S, .admStrataNodes(s), warn_range = FALSE,
+                             cov_range = spb$cov_range)
         kids <- .admDoseNodeSpecs(spb, stl, .S)
         for (i in seq_along(kids)) {
           spk <- kids[[i]]
@@ -1280,8 +1280,8 @@ print() a single study to check its transcription.
       stl <- if (identical(s[[".dose_strata"]]$key,
                            list(s$population, .fcv, .admStrataNodes(s),
                                 sp$cov_range))) s[[".dose_strata"]]$strata
-             else .admDoseStrata(s$population, .fcv, .admStrataNodes(s),
-                                 sp$cov_range)
+             else .admCovStrata(s$population, .fcv, .admStrataNodes(s), warn_range = FALSE,
+                                cov_range = sp$cov_range)
       if (is.null(stl) || !length(stl))
         stop("admixr2: study '", nm, "': the dose function's covariates ",
              paste(sQuote(.fcv), collapse = ", "), " produced no nodes; ",
