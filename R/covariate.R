@@ -4331,19 +4331,21 @@ print.covDist <- function(x, ...) {
 # The recombination's is not. It reproduces the polynomial moments in its basis
 # exactly (its mean and scale come back at 1e-16) and the nonlinear integrands
 # a likelihood contains only to the accuracy its ATOM COUNT allows, and that
-# count is set by the node budget, not by j: measured, it sits at ~2e-03 for
-# every j from 7 to 21. Gating it at the cloud's tolerance would decline every
-# truncated design; gating it at nothing would ship the rank-three case, whose
-# 20 atoms leave it at ~3e-02. Its bound is set where the end-to-end objective
-# error stays at the 1e-05 level -- see
+# count is set by the node budget, not by j: measured, it sits at 0.9e-03 to
+# 2.8e-03 for the admitted rank-two designs. Gating it at the cloud's tolerance
+# would decline every truncated design; gating it at nothing would ship the
+# rank-three case, whose 20 atoms leave it at 2e-02 to 6e-02 locally -- and
+# under 1e-02 at one j on another platform, admitted with a 1e-03 objective
+# gap, so the bound sits between the two. Its bound is set where the
+# end-to-end objective error stays at the 1e-05 level -- see
 # test-integration-projected-convergence.R, which measures that rather than
 # assuming it.
 .admCovCloudCertify <- function(cov_dist, cn, Rss, A, r, n_nodes,
-                                j_max, tol = 1e-3, tol_recomb = 1e-2) {
+                                j_max, tol = 1e-3, tol_recomb = 5e-3) {
   cand <- Filter(function(j) j <= j_max, c(7L, 9L, 11L, 13L, 15L, 17L, 21L))
   if (length(cand) < 2L) return(NULL)
   deg  <- .admCovMomentDegree(as.integer(n_nodes)^r, r)
-  prev <- NULL; nrm <- NULL
+  prev <- NULL; nrm <- NULL; e_prv <- Inf
   for (j in cand) {
     cl <- tryCatch(.admCovCloud(cov_dist, cn, Rss, A, j), error = function(e) NULL)
     if (is.null(cl) || !all(is.finite(cl$su))) return(NULL)
@@ -4361,10 +4363,15 @@ print.covDist <- function(x, ...) {
     e_rec <- .admCovCloudErr(got, ref)
     if (!is.null(prev)) {
       e_cld <- .admCovCloudErr(prev, ref)
-      if (e_cld < tol && e_rec < tol_recomb)
-        return(list(j = j, cloud = e_cld, recomb = e_rec))
+      # the recombination at BOTH resolutions the cloud check compares: which
+      # atoms survive turns on rounding-level ties in the elimination, so one
+      # resolution can dip under the bound by luck (it did, on another
+      # platform, for a rule 2e-02 out everywhere else)
+      e_rc2 <- max(e_rec, e_prv)
+      if (e_cld < tol && e_rc2 < tol_recomb)
+        return(list(j = j, cloud = e_cld, recomb = e_rc2))
     }
-    prev <- ref
+    prev <- ref; e_prv <- e_rec
   }
   NULL
 }
