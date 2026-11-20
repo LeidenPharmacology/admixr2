@@ -1315,106 +1315,225 @@
   .admCovDistCanon(out)
 }
 
-# STRATA OVER A RANGED, CORRELATED SET, CONDITIONED SEQUENTIALLY -- or NULL
-# when the joint route below is exact and nothing needs doing.
+# STRATA UNDER RANGES THAT A CORRELATION CARRIES -- or NULL when the joint
+# route below is exact and nothing needs doing.
 #
 # The joint route lays a grid over the stratified covariates rotated by
 # chol(R_SS), and a range-truncated margin enters it through its OWN uniform:
 # the correlation then acts on the margin's position inside its range, not on
 # the full-margin latent the copula couples through, so a correlated partner
-# never feels the range. Measured with WT and CRCL stratified at rho = 0.6 and
-# CRCL enrolled at 15-40: E[WT] 75.00 against 67.63 from the full law, through
-# plain `stratify` as much as through a dose rule. The projected design's
-# truncated branch (.admCovCloud) maps the same way, so this route wins over
-# `proj` too. The marginalised block maps through `.band` and IS exact, so:
-#   1. cut the ranged covariate alone (the rest conditioned exactly on each
-#      node), and
-#   2. cut the rest from each node's conditional law.
-# A product of exact conditional rules is a rule for the joint law.
-#
-# A RANGE ON THE REST TOO makes the target a normal truncated to a RECTANGLE
-# in latent space, so each stage-1 node is weighted by P(rest in range | node)
-# -- a normal probability from the node's latent shift and scale -- and the
-# rest are re-expressed by their conditional margin (.admCovEffMargin) on a
-# standardised latent, so the ordinary range machinery truncates the law they
-# have at the node. Any number of ranged covariates: each stage weights its
-# node by P(the NEXT ranged covariate in range | everything conditioned so
-# far), and the product of those factors is the truncated joint law.
+# never feels the range (E[WT] 75.00 against 67.63 for CRCL enrolled at 15-40,
+# rho = 0.6). A range on a correlated covariate that is NOT stratified never
+# reached the stratified nodes at all (67.63 against 70.57 with AGE enrolled
+# at 70-90, rho(CRCL, AGE) = -0.6). The target is the copula's normal
+# truncated to the box the ranges make; it factorises exactly as
+#   p(z | box) = prod_k  P(z_k in r_k | z_<k) * p_trunc(z_k | z_<k)  / P(box),
+# so:
+#   * every ranged continuous covariate CONNECTED to the stratified set through
+#     the correlation takes part -- stratified or not;
+#   * the stratified ones are cut in sequence, each from its conditional law
+#     truncated to its range; the one a stage weights by P(in range | node) is
+#     the one the next stage cuts, so the result does not depend on the order
+#     `range` was written in (it used to: 60.46 against 57.54);
+#   * the ranged ones that are NOT stratified weight each finished node by
+#     P(all of them in range | node), computed the same way, and stay in its
+#     cov_dist on their conditional law, truncated to their range.
+# A product of exact conditional rules is a rule for the joint law. Untouched,
+# bit for bit: a range that no correlation carries to another covariate.
 .admCovStrataSeq <- function(cd, S, n_nodes, n_pool, cov_range) {
-  res <- .admCovSeqCore(cd, S, n_nodes, n_pool, cov_range, top = TRUE)
-  if (is.null(res)) return(NULL)
+  cd <- .admCovDistCanon(cd)
+  rs <- .admCovSeqSets(cd, S, cov_range)
+  if (is.null(rs)) return(NULL)
+  res <- .admCovSeqCore(cd, S, n_nodes, n_pool, cov_range, rs$RM)
   out <- res$nodes
-  # weights carry P(next range | conditioning) factors; normalise once, at the
-  # end. Without any such factor every weight is left as it was, bit for bit.
+  # weights carry P(range | conditioning) factors; normalise once, at the end
   if (res$reweighted) {
     tot <- sum(vapply(out, function(z) z$weight, numeric(1)))
     if (!(tot > 0))
       stop("admixr2: the enrolled ranges of ",
-           paste(sQuote(intersect(names(cov_range), S)), collapse = ", "),
+           paste(sQuote(intersect(names(cov_range), .admCovSpecNames(cd))),
+                 collapse = ", "),
            " leave no patients under the declared correlation.", call. = FALSE)
     for (k in seq_along(out)) out[[k]]$weight <- out[[k]]$weight / tot
   }
   out
 }
 
-# One stage of .admCovStrataSeq(): cut a ranged, coupled covariate `first`
-# alone, weight each node by P(the next ranged covariate in its range | node),
-# re-express that covariate by its conditional margin on a standardised latent,
-# and recurse over the rest. Weights are left UNNORMALISED, so the product of
-# the stages' range probabilities survives to the end. NULL at the top when no
-# ranged covariate is coupled to another, and the joint route is exact.
-.admCovSeqCore <- function(cd, S, n_nodes, n_pool, cov_range, top = FALSE) {
+# Which ranges a correlation carries. `RM`: ranged continuous covariates, NOT
+# stratified, connected to a stratified one through the latent correlation.
+# NULL when the joint route is exact: no ranged stratified covariate is coupled
+# to another stratified or RM covariate, and RM is empty.
+.admCovSeqSets <- function(cd, S, cov_range) {
+  nms <- .admCovSpecNames(cd); R <- cd[["latentR"]]
+  if (is.null(R) || !length(cov_range) || is.null(names(cov_range))) return(NULL)
+  isc  <- function(v) is.null(cd[[v]][["values"]])
+  rng  <- Filter(isc, intersect(names(cov_range), nms))
+  Sc   <- Filter(isc, intersect(S, nms))
+  if (!length(rng) || !length(Sc)) return(NULL)
+  adj  <- abs(R) > 1e-12; diag(adj) <- FALSE
+  comp <- match(Sc, nms)                       # connected to the stratified set
+  repeat {
+    nb <- setdiff(which(colSums(adj[comp, , drop = FALSE]) > 0), comp)
+    if (!length(nb)) break
+    comp <- c(comp, nb)
+  }
+  RM <- setdiff(intersect(rng, nms[comp]), S)
+  RS <- intersect(rng, Sc)
+  cpl <- function(v) {
+    o <- match(setdiff(c(Sc, RM), v), nms)
+    length(o) > 0L && any(adj[match(v, nms), o])
+  }
+  if (!length(RM) && !any(vapply(RS, cpl, logical(1)))) return(NULL)
+  list(RM = RM)
+}
+
+# One stage: cut `first` (a ranged stratified covariate) alone; weight each node
+# by P(the NEXT ranged stratified covariate in range | node) and re-express that
+# one by its conditional margin, then recurse with it FORCED as the next stage's
+# `first`. When no ranged stratified covariate is left, the rest are cut
+# jointly and every node is weighted by P(RM in range | node). Weights are left
+# UNNORMALISED, so the product of the stages' probabilities survives.
+.admCovSeqCore <- function(cd, S, n_nodes, n_pool, cov_range, RM = character(0),
+                           first = NULL) {
   cd  <- .admCovDistCanon(cd)
   nms <- .admCovSpecNames(cd)
-  R   <- cd[["latentR"]]
   rS  <- if (length(cov_range)) cov_range[intersect(names(cov_range), nms)]
-  cont <- S[vapply(S, function(v) is.null(cd[[v]][["values"]]), logical(1))]
-  coupled <- function(v) {
-    o <- match(setdiff(cont, v), nms)
-    !is.null(R) && length(o) > 0L && any(abs(R[match(v, nms), o]) > 1e-12)
+  isc <- function(v) is.null(cd[[v]][["values"]])
+  # a FORCED `first` arrives already on its truncated conditional law (from
+  # .admCovRangeStandardise), so its range must not be applied a second time
+  forced <- !is.null(first)
+  if (is.null(first)) first <- Filter(isc, intersect(names(rS), S))[1L]
+  if (is.na(first %||% NA)) {
+    # nothing left to cut in sequence: the rest jointly, under every range but
+    # the RM ones, which weight the node instead
+    st <- .admCovStrata(cd, S, n_nodes, n_pool, warn_range = FALSE,
+                        cov_range = .admRangesBut(rS, RM))
+    if (!length(RM)) return(list(nodes = st, reweighted = FALSE))
+    for (k in seq_along(st)) {
+      bx <- .admCovBoxProb(st[[k]]$cov_dist, RM, rS[RM], n_nodes, n_pool)
+      st[[k]]$weight   <- st[[k]]$weight * bx$p
+      st[[k]]$cov_dist <- bx$cov_dist
+    }
+    return(list(nodes = Filter(function(z) z$weight > 0, st), reweighted = TRUE))
   }
-  first <- if (length(S) > 1L) Filter(coupled, intersect(names(rS), cont))
-  if (!length(first)) {
-    if (top) return(NULL)
-    return(list(nodes = .admCovStrata(cd, S, n_nodes, n_pool, warn_range = FALSE,
-                                      cov_range = if (length(rS)) rS),
-                reweighted = FALSE))
-  }
-  first <- first[1L]
-  rest  <- setdiff(S, first)
-  rr    <- intersect(names(rS), rest)                      # ranges on the rest
-  nxt   <- intersect(rr, cont)[1L]                         # NA when none
+  rest <- setdiff(S, first)
+  nxt  <- Filter(isc, intersect(names(rS), rest))[1L]       # NA when none
   # stage 1: `first` inside its range, and inside every range not on the rest
-  cr1 <- rS[setdiff(names(rS), rr)]
+  # nor on RM (those are conditioned on below)
+  cr1 <- .admRangesBut(rS, c(intersect(names(rS), rest), RM, if (forced) first))
   st1 <- .admCovStrata(cd, first, n_nodes, n_pool, warn_range = FALSE,
-                       cov_range = if (length(cr1)) cr1)
-  out <- list(); rew <- !is.na(nxt)
+                       cov_range = cr1)
+  out <- list(); rew <- !is.na(nxt) || length(RM) > 0L
   for (nd in st1) {
     cdn <- nd$cov_dist; p <- 1
     if (!is.na(nxt)) {
-      lo_hi <- sort(as.numeric(rS[[nxt]]))
-      jb <- match(nxt, .admCovSpecNames(cdn))
-      m  <- as.numeric(cdn[["latentMu"]][jb] %||% 0)
-      v  <- as.numeric(cdn[["latentScale"]][jb] %||% 1)
-      zz <- stats::qnorm(.admCovCdfOf(cdn[[nxt]])(lo_hi))
-      p  <- stats::pnorm((zz[2L] - m) / v) - stats::pnorm((zz[1L] - m) / v)
-      # the conditional margin on a standardised latent: its range below now
-      # truncates the law it has at this node, and `.band` maps through it
-      cdn[[nxt]] <- .admCovEffMargin(cdn, nxt)
-      if (!is.null(cdn[["latentMu"]]))    cdn[["latentMu"]][jb] <- 0
-      if (!is.null(cdn[["latentScale"]])) cdn[["latentScale"]][jb] <- 1
+      sw  <- .admCovRangeStandardise(cdn, nxt, rS[[nxt]])
+      p   <- sw$p; cdn <- sw$cov_dist
     }
-    if (!(p > 0)) next
-    sub <- .admCovSeqCore(cdn, rest, n_nodes, n_pool,
-                          if (length(rr)) rS[rr])
+    # a node whose conditional law puts no mass in the range carries no
+    # weight, and truncating that law to the range would describe nothing
+    if (!(p > .ADM_SEQ_TINY)) next
+    sub <- if (length(rest))
+      .admCovSeqCore(cdn, rest, n_nodes, n_pool, .admRangesBut(rS, first), RM,
+                     first = if (!is.na(nxt)) nxt)
+    else {
+      # `first` was the last stratified covariate: only RM is left to weigh
+      if (length(RM)) {
+        bx <- .admCovBoxProb(cdn, RM, rS[RM], n_nodes, n_pool)
+        list(nodes = list(list(cov = list(), cov_dist = bx$cov_dist,
+                               weight = bx$p)), reweighted = TRUE)
+      } else list(nodes = list(list(cov = list(), cov_dist = cdn, weight = 1)),
+                  reweighted = FALSE)
+    }
     rew <- rew || sub$reweighted
     for (nd2 in sub$nodes)
-      out[[length(out) + 1L]] <- list(cov = c(nd$cov, nd2$cov)[S],
-                                      cov_dist = nd2$cov_dist,
-                                      weight = nd$weight * p * nd2$weight,
-                                      n_pool_cell = NA_integer_)
+      if (nd2$weight > 0)
+        out[[length(out) + 1L]] <- list(cov = c(nd$cov, nd2$cov)[S],
+                                        cov_dist = nd2$cov_dist,
+                                        weight = nd$weight * p * nd2$weight,
+                                        n_pool_cell = NA_integer_)
   }
   list(nodes = out, reweighted = rew)
+}
+
+# Below this a range probability counts as zero: the node is dropped instead
+# of truncating a conditional law that has no mass in the range.
+.ADM_SEQ_TINY <- 1e-10
+
+# `rs` without the names in `drop`, NULL when nothing is left.
+.admRangesBut <- function(rs, drop) {
+  r <- rs[setdiff(names(rs), drop)]
+  if (length(r)) r
+}
+
+# P(`v` in `rng` | the conditioning `cd` carries), and `cd` with `v` replaced by
+# its conditional law TRUNCATED to `rng`, on a standardised latent w:
+#   x = Q(Phi(m + s * qnorm(pa + u (pb - pa)))),  [pa, pb] = P-band of w,
+# with `.band = c(pa, pb)` so the strata code maps a node back to w. Built in
+# closed form from the latent shift and scale: handing the conditional margin
+# to the generic range code inverted its CDF on a grid that stops at 1e-6, and
+# far in a tail declared a range with real mass to be empty. p = 0 (and `cd`
+# unchanged) when the range holds no mass at this conditioning.
+.admCovRangeStandardise <- function(cd, v, rng) {
+  jb <- match(v, .admCovSpecNames(cd))
+  m  <- as.numeric(cd[["latentMu"]][jb] %||% 0)
+  s  <- as.numeric(cd[["latentScale"]][jb] %||% 1)
+  sp <- cd[[v]]
+  zz <- stats::qnorm(.admCovCdfOf(sp)(sort(as.numeric(rng))))
+  pa <- stats::pnorm((zz[1L] - m) / s); pb <- stats::pnorm((zz[2L] - m) / s)
+  if (!(pb - pa > .ADM_SEQ_TINY)) return(list(p = 0, cov_dist = cd))
+  cd[[v]] <- local({
+    sp <- sp; m <- m; s <- s; pa <- pa; pb <- pb
+    list(quantile = function(u)
+      .admCovQuantile(sp, stats::pnorm(m + s * stats::qnorm(pa + u * (pb - pa)))),
+      .band = c(pa, pb))
+  })
+  if (!is.null(cd[["latentMu"]]))    cd[["latentMu"]][jb] <- 0
+  if (!is.null(cd[["latentScale"]])) cd[["latentScale"]][jb] <- 1
+  list(p = pb - pa, cov_dist = .admCovRecanon(cd))
+}
+
+# Re-canonicalise a cov_dist whose margins were edited after canonicalisation:
+# the canon short-circuits on an existing `joint`, so the sampler would keep the
+# OLD margins. Drop the derived fields, hand the dependence back as `cor`, and
+# keep any latent shift and scale -- exactly what .admCovApplyRange() does.
+.admCovRecanon <- function(cd) {
+  if (!isTRUE(cd[["jointOwn"]])) return(.admCovDistCanon(cd))
+  nms <- .admCovSpecNames(cd)
+  R   <- cd[["latentR"]]; lmu <- cd[["latentMu"]]; lsd <- cd[["latentScale"]]
+  cd[c("joint", "jointOwn", "latentR", "discExact", "latentMu", "latentScale")] <- NULL
+  if (!is.null(R) && length(nms) > 1L && identical(dim(R), c(length(nms), length(nms)))) {
+    dimnames(R) <- list(nms, nms)
+    cd[["cor"]] <- R
+  }
+  if (!is.null(lmu)) cd[["latentMu"]] <- lmu
+  if (!is.null(lsd)) cd[["latentScale"]] <- lsd
+  .admCovDistCanon(cd)
+}
+
+# P(every covariate in `vars` inside its range | the conditioning `cd`
+# carries), and `cd` with each of them on its conditional margin, truncated to
+# its range. One: a normal probability. Several: P(first) times the total of a
+# sequential cut over them, whose unnormalised weights sum to P(rest | first).
+.admCovBoxProb <- function(cd, vars, rng, n_nodes, n_pool) {
+  cd <- .admCovDistCanon(cd)
+  sw <- .admCovRangeStandardise(cd, vars[1L], rng[[vars[1L]]])
+  p  <- sw$p; cdv <- sw$cov_dist
+  # no mass in the box: weight 0, and the node is dropped by the caller
+  if (!(p > .ADM_SEQ_TINY)) return(list(p = 0, cov_dist = cd))
+  if (length(vars) > 1L) {
+    sub <- .admCovSeqCore(cdv, vars, n_nodes, n_pool, rng, first = vars[1L])
+    p <- p * sum(vapply(sub$nodes, function(z) z$weight, numeric(1)))
+    if (!(p > .ADM_SEQ_TINY)) return(list(p = 0, cov_dist = cd))
+  }
+  # each carried on its conditional law truncated to its range (the copula
+  # among their residuals is kept, as for any marginalised covariate)
+  for (v in vars[-1L]) {
+    sw <- .admCovRangeStandardise(cdv, v, rng[[v]])
+    if (!(sw$p > 0)) return(list(p = 0, cov_dist = cd))
+    cdv <- sw$cov_dist
+  }
+  list(p = p, cov_dist = cdv)
 }
 
 .admCovStrata <- function(cov_dist, stratify, n_nodes = 5L,
@@ -1436,7 +1555,9 @@
   # the joint grid (and the projected design) would map the range through the
   # margin's own uniform. Condition sequentially instead -- see
   # .admCovStrataSeq(). The no-range warning below still applies to it.
-  .seq_needed <- !is.null(cov_range) && length(stratify) > 1L
+  # (one stratified covariate is enough: a ranged, correlated covariate that is
+  # NOT stratified reweights its nodes)
+  .seq_needed <- !is.null(cov_range) && length(stratify) >= 1L
   # ...unless the projected design takes this set: its truncated cloud is drawn
   # from the box-truncated law itself (.admCovCloud), exact and much cheaper
   if (.seq_needed && !is.null(proj)) {
@@ -4123,6 +4244,13 @@ print.covDist <- function(x, ...) {
     zk <- m[i] + s * stats::qnorm(pa[i] + uu * (pb[i] - pa[i]))
     w  <- w[i] * rep(wg, times = nr) * (pb[i] - pa[i])
     zf <- cbind(zf[i, , drop = FALSE], zk)
+    # an atom whose band probability underflowed carries no weight, and its
+    # +/-Inf coordinate would turn the next coordinate's mean into NaN
+    keep <- w > 0 & is.finite(zk)
+    if (!any(keep))
+      stop("admixr2: the enrolled ranges leave no mass under the declared ",
+           "correlation.", call. = FALSE)
+    zf <- zf[keep, , drop = FALSE]; w <- w[keep]
   }
   # back to each margin's position inside its band, the score the caller reads
   u  <- vapply(seq_len(d), function(k)

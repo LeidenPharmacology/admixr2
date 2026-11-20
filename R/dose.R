@@ -806,16 +806,28 @@ print.admDoseBands <- function(x, ...) {
   oth <- oth[vapply(oth, function(v) is.null(cd[[v]][["values"]]), logical(1))]
   if (is.null(R) || !length(oth)) return(NULL)
   ia <- match(bcv, nms)
-  cp <- oth[abs(R[ia, match(oth, nms)]) > 1e-12]
+  # every ranged covariate CONNECTED to the banded one through the correlation,
+  # not only its direct partners: a range on HT moves WT, and WT moves CRCL
+  adj <- abs(R) > 1e-12; diag(adj) <- FALSE
+  comp <- ia
+  repeat {
+    nb <- setdiff(which(colSums(adj[comp, , drop = FALSE]) > 0), comp)
+    if (!length(nb)) break
+    comp <- c(comp, nb)
+  }
+  cp <- intersect(oth, nms[comp])
   if (!length(cp)) return(NULL)
   Fa <- .admCovCdfOf(cd[[bcv]])
-  if (length(cp) > 1L) {
-    # several correlated ranges: P(band) x P(all of them | band), the second
-    # from the sequential conditioner's UNNORMALISED weights (the band covariate
-    # first), whose total is exactly that conditional probability
+  if (length(cp) > 1L || !adj[ia, match(cp, nms)]) {
+    # P(band) x P(all of them in range | band): the sequential conditioner cuts
+    # the banded covariate and weighs each node by the box probability of the
+    # rest. 15 nodes, not the study's own: this is one-off arithmetic, no
+    # solves, and its accuracy must not jump when a second range is added.
     mass <- vapply(spans, function(sp) {
       cr  <- c(stats::setNames(list(sp), bcv), cov_range[cp])
-      res <- .admCovSeqCore(cd, c(bcv, cp), .ADM_STRATA_NODES, 32768L, cr)
+      # NOT forced: a forced `first` is taken as already truncated, and the band
+      # would never be applied (every band then got the population's box)
+      res <- .admCovSeqCore(cd, bcv, 15L, 32768L, cr, RM = cp)
       diff(Fa(sp)) * sum(vapply(res$nodes, function(z) z$weight, numeric(1)))
     }, numeric(1))
     if (!(sum(mass) > 0))
